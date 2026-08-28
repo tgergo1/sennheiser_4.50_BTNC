@@ -106,3 +106,77 @@ def test_rejects_a_block_with_the_wrong_channel_count():
 def test_supports_mono():
     equaliser = dsp.Equaliser(eq.preset("Pop"), RATE, channels=1)
     assert equaliser.process(np.zeros((256, 1), dtype=np.float32)).shape == (256, 1)
+
+
+SWITCH_AT = 6 * 512
+
+
+def _switch_output(fade, blocks=12, block=512, at=SWITCH_AT // 512):
+    """Change preset partway through a steady signal and return the output.
+
+    The signal is DC on purpose. A tone's own slew between samples is far
+    larger than the step a preset change causes, so it would hide exactly what
+    this is measuring; with DC the filters settle flat and any step is the
+    switch.
+    """
+    equaliser = dsp.Equaliser(eq.preset("Loudness"), RATE, fade_ms=20.0)
+    signal = np.ones((blocks * block, 2), dtype=np.float32)
+    pieces = []
+    for index in range(blocks):
+        if index == at:
+            equaliser.set_preset(eq.preset("Neutral"), fade=fade)
+        pieces.append(equaliser.process(signal[index * block : (index + 1) * block]))
+    return np.concatenate(pieces), equaliser
+
+
+def _largest_step(signal, start=SWITCH_AT - 2, length=2048):
+    """Largest sample-to-sample jump in a window.
+
+    Defaults to the window around the preset change. The filter's own start-up
+    transient at sample zero is larger than the switch step and would mask it,
+    so it is deliberately outside the window.
+    """
+    window = np.abs(np.diff(signal, axis=0))[start : start + length]
+    return float(window.max())
+
+
+def test_crossfading_removes_the_step_a_preset_change_would_otherwise_cause():
+    faded, _ = _switch_output(fade=True)
+    abrupt, _ = _switch_output(fade=False)
+    # Loudness carries a -6.4 dB preamp and Neutral none, so swapping them
+    # abruptly jumps the level by about half of full scale in one sample.
+    assert _largest_step(abrupt) > 0.4
+    assert _largest_step(faded) < _largest_step(abrupt) / 100
+
+
+def test_a_crossfade_stays_between_the_two_curves_and_never_overshoots():
+    faded, _ = _switch_output(fade=True)
+    abrupt, _ = _switch_output(fade=False)
+    # A linear mix of the two filter outputs cannot leave their range; an
+    # equal-power mix of these correlated signals would exceed it.
+    assert np.abs(faded).max() <= max(np.abs(abrupt).max(), 1.0) + 1e-6
+
+
+def test_the_crossfade_finishes_and_leaves_the_new_curve_running():
+    _, equaliser = _switch_output(fade=True)
+    assert not equaliser.fading
+    assert equaliser.preset.name == "Neutral"
+    # Neutral is a pass-through, so once the fade is done the output is the input.
+    block = tone(1000, frames=512).astype(np.float32)
+    assert np.allclose(equaliser.process(block), block)
+
+
+def test_the_first_preset_is_not_faded_in_from_silence():
+    equaliser = dsp.Equaliser(eq.preset("Rock"), RATE)
+    assert not equaliser.fading
+
+
+def test_a_second_change_during_a_fade_does_not_stack_filters():
+    equaliser = dsp.Equaliser(eq.preset("Rock"), RATE, fade_ms=50.0)
+    equaliser.process(tone(1000, frames=256).astype(np.float32))
+    equaliser.set_preset(eq.preset("Jazz"))
+    assert equaliser.fading
+    equaliser.set_preset(eq.preset("Voice"))
+    equaliser.process(tone(1000, frames=4096).astype(np.float32))
+    assert not equaliser.fading
+    assert equaliser.preset.name == "Voice"

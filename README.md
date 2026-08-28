@@ -54,6 +54,20 @@ note that this leaves `captune` inside `.venv/bin`, reachable only after
 Python 3.10+, macOS. The equaliser itself is portable; the Bluetooth survey and
 the permission plumbing are macOS-specific.
 
+## The menu bar app
+
+```
+captune ui
+```
+
+A sliders icon appears in the menu bar. From it you can start and stop the
+equaliser, pick the output device, and switch preset, calibration, crossfeed
+and loudness while music is playing.
+
+It holds no state of its own — everything it shows is read back from the
+daemon every two seconds, so the menu and the audio can never disagree, and
+the CLI and the menu can be used interchangeably.
+
 ## System-wide equaliser
 
 CapTune could only equalise music it played itself. This does better: with a
@@ -188,6 +202,7 @@ available.
 | `captune eq start --input DEV --output DEV` | start the always-on equaliser |
 | `captune eq set NAME` / `stop` / `status` | control it while it runs |
 | `captune eq status --reset` | show it, then clear the counters |
+| `captune ui` | open the menu bar app |
 | `captune audio devices` | list CoreAudio devices |
 | `captune devices` | list paired Bluetooth devices |
 | `captune survey ADDR` | report a headphone's control channel, if any |
@@ -232,6 +247,17 @@ over a Unix socket. See `src/opencaptune/hostapp.py`.
 
 Reading from BlackHole counts as microphone input to macOS, which is why the
 equaliser needs microphone permission despite never touching a microphone.
+
+The bundle is an `LSUIElement` accessory app rather than `LSBackgroundOnly`,
+which is what lets the same bundle both run the daemon in the background and
+put an item in the menu bar.
+
+### A note on stacking corrections
+
+Each correction takes headroom, and they add up. A boosted preset over the
+calibration over loudness compensation can reach a preamp of −17 dB, which is
+correct — it is what stops the combination clipping — but it will be quiet.
+`captune eq status` always shows the preamp in force.
 
 ## GAIA
 

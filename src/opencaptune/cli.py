@@ -9,7 +9,7 @@ import sys
 from . import daemon
 from . import eq as equaliser
 from .bluetooth import uuids as uuid_table
-from .hostapp import HostAppError, ensure_bundle, run_helper
+from .hostapp import HostAppError, ensure_bundle, launch_detached, run_helper
 from .survey import survey
 
 
@@ -175,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     survey_parser.add_argument("-v", "--verbose", action="store_true", help="include SDP records")
 
     subcommands.add_parser("bundle", help="rebuild the macOS Bluetooth helper bundle")
+    subcommands.add_parser("ui", help="open the menu bar app")
 
     audio_parser = subcommands.add_parser("audio", help="audio device inspection")
     audio_commands = audio_parser.add_subparsers(dest="audio_command", required=True)
@@ -356,6 +357,11 @@ def main(argv: list[str] | None = None) -> int:
 
         if arguments.command == "devices":
             _print_devices(run_helper({"action": "list_devices"})["devices"])
+            return 0
+
+        if arguments.command == "ui":
+            launch_detached("opencaptune.menubar", [])
+            print("Menu bar app started — look for the slider icon in the menu bar.")
             return 0
 
         if arguments.command == "bundle":

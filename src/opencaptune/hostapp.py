@@ -67,8 +67,9 @@ def _info_plist() -> dict:
         "CFBundleName": "OpenCapTune",
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": "0.1.0",
-        # No dock icon: this bundle exists only to own a TCC identity.
-        "LSBackgroundOnly": True,
+        # An accessory app: no dock icon, but unlike LSBackgroundOnly it may
+        # still put an item in the menu bar.
+        "LSUIElement": True,
         "NSBluetoothAlwaysUsageDescription": BLUETOOTH_USAGE,
         "NSBluetoothPeripheralUsageDescription": BLUETOOTH_USAGE,
         "NSMicrophoneUsageDescription": MICROPHONE_USAGE,

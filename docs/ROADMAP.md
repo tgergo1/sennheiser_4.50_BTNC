@@ -44,20 +44,38 @@ Crossfeed mixes a delayed, low-passed copy of each channel into the other.
 Bauer and Meier designs are well documented and are a handful of biquads plus a
 delay line — it fits the existing engine directly.
 
-### 4. Per-application equalisation — *verified available, moderate effort*
+### 4. Per-application equalisation — *attempted; blocked on one call*
 
-macOS 14.2+ has CoreAudio process taps, and I confirmed the bindings exist in
-PyObjC (`CATapDescription`, `AudioHardwareCreateProcessTap`). This would be a
-real architectural upgrade:
+macOS 14.2+ has CoreAudio process taps, which would remove BlackHole entirely
+and allow a different curve per application.
 
-- **No BlackHole.** No driver install, no output-device switching, no
-  `coreaudiod` restart problem.
-- **Per-app curves.** A different preset for music than for video calls.
-- `CATapDescription` can exclude processes, so the equaliser's own output does
-  not feed back into its input.
+**What works from Python, verified on this machine:**
 
-The catch is that taps need their own TCC permission and a private aggregate
-device, so it is a genuine build rather than a swap.
+- Translating a PID to the `AudioObjectID` CoreAudio uses for a process, via
+  `kAudioHardwarePropertyTranslatePIDToProcessObject`. The qualifier argument
+  must be `b""`; passing `None` raises "converting to a C array".
+- `CATapDescription.initStereoGlobalTapButExcludeProcesses_([self])`, which
+  taps everything *except* us — that exclusion is what stops the equaliser's
+  own output feeding back into its input.
+- `setMuteBehavior_(1)`, so the untreated audio is muted on the device while we
+  play the processed copy.
+- `AudioHardwareCreateProcessTap` — **returns status 0 and a live tap object**.
+- Reading a device's UID, though the CFString comes back as a raw pointer that
+  must be copied to a Python string immediately: keeping the wrapper alive
+  makes PyObjC release a string it does not own, which crashes later.
+
+**What blocks it:** `AudioHardwareCreateAggregateDevice` segfaults
+(`EXC_BAD_ACCESS`), both through PyObjC's binding and through a direct `ctypes`
+call with the ABI declared by hand. The crash lands before the function
+executes, which points at how the `CFDictionary` describing the aggregate is
+marshalled rather than at the call itself.
+
+**What would fix it:** a small Swift or Objective-C helper that builds the tap
+and the aggregate and returns the resulting device, with Python driving it. The
+audio path afterwards is unchanged — the aggregate simply appears as an input
+device where BlackHole is today. That is perhaps 100 lines of Swift and a build
+step, which is why it has not been done here yet rather than because it is
+uncertain.
 
 ### 5. Real loudness compensation — **done**
 

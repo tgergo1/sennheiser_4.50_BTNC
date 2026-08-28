@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from .. import eq
 from ..eq import loudness as loudness_module
 from .crossfeed import Crossfeed
+from . import volume as volume_control
 from .devices import Device, resolve
 from .dsp import Equaliser
 
@@ -26,6 +27,7 @@ class EngineConfig:
     loudness_phon: float | None = None
     reference_phon: float = loudness_module.DEFAULT_REFERENCE_PHON
     crossfeed: int = 0
+    manage_volume: bool = True
     bass: int = 0
     treble: int = 0
     sample_rate: int | None = None
@@ -52,6 +54,7 @@ class Engine:
         self.stats = Stats()
         self._stream = None
         self._lock = threading.Lock()
+        self._restore_volume: tuple[int, float] | None = None
 
         self.input = resolve(config.input_device, "input")
         self.output = resolve(config.output_device, "output")
@@ -138,11 +141,43 @@ class Engine:
         if peak > self.stats.peak:
             self.stats.peak = peak
 
+    def _take_output_volume(self) -> None:
+        """Put the output device at unity so nothing attenuates behind our back.
+
+        Once the system output is the virtual device, the volume keys act on
+        that and can no longer reach the real output device, whose own volume
+        then silently scales everything we send.
+        """
+        if not self.config.manage_volume:
+            return
+        try:
+            device = volume_control.find_output_device(self.output.name)
+            if device is None:
+                return
+            current = volume_control.get_volume(device)
+            if current is None or current >= 0.999:
+                return
+            if volume_control.set_volume(device, 1.0):
+                self._restore_volume = (device, current)
+        except Exception:  # noqa: BLE001 - never block playback over this
+            self._restore_volume = None
+
+    def _give_output_volume_back(self) -> None:
+        if self._restore_volume is None:
+            return
+        device, previous = self._restore_volume
+        try:
+            volume_control.set_volume(device, previous)
+        except Exception:  # noqa: BLE001
+            pass
+        self._restore_volume = None
+
     def start(self) -> None:
         import sounddevice  # noqa: PLC0415
 
         if self.running:
             return
+        self._take_output_volume()
         self._stream = sounddevice.Stream(
             device=(self.input.index, self.output.index),
             samplerate=self.sample_rate,
@@ -158,6 +193,7 @@ class Engine:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+        self._give_output_volume_back()
 
     def status(self) -> dict:
         return {
@@ -173,6 +209,9 @@ class Engine:
             ),
             "loudness_phon": self.config.loudness_phon,
             "crossfeed": self._crossfeed.strength,
+            "output_volume_raised_from": (
+                round(self._restore_volume[1], 3) if self._restore_volume else None
+            ),
             "preamp_db": round(self._equaliser.preamp_db, 2),
             "latency_ms": round(self.config.block_size / self.sample_rate * 1000, 1),
             "frames": self.stats.frames,

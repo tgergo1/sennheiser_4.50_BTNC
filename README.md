@@ -110,6 +110,23 @@ risk of glitches, which `captune eq status` counts. Those counters — frames,
 glitches and peak — accumulate since the last reset, and `peak` is a running
 maximum, so use `captune eq status --reset` before measuring anything.
 
+### Volume
+
+Your volume keys act on whichever device is the system output, so once that is
+BlackHole they control BlackHole — and the headphones' own device volume is
+left wherever it happened to be, silently attenuating everything the equaliser
+sends, with no control able to reach it.
+
+So the equaliser raises its output device to full while it runs and puts it
+back when it stops. Volume then lives entirely on BlackHole, where your keys
+are. `captune eq status` says when it has done this. Pass
+`--no-manage-volume` to leave the device alone.
+
+Corrections cost level on top of that, and unavoidably: you cannot boost
+3.9 kHz by 8 dB without making room for it first. The calibration alone takes
+6.2 dB. If you want the loudest possible output, run `Neutral` with no
+calibration, which needs no preamp at all.
+
 **To hear your Mac normally again**, set the output device back and
 `captune eq stop`.
 

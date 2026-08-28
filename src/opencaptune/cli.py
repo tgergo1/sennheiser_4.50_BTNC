@@ -139,6 +139,9 @@ def _print_status(report: dict) -> None:
     correction = report.get("calibration")
     print(f"  preset      {report['preset']}  (preamp {report['preamp_db']:+.1f} dB)")
     print(f"  calibration {correction or 'off'}")
+    phon = report.get("loudness_phon")
+    print(f"  loudness    {'off' if phon is None else f'{phon:g} phon'}"
+          f"     crossfeed {report.get('crossfeed', 0)}%")
     print(f"  routing     {report['input']} -> {report['output']}")
     print(f"  format      {report['sample_rate']} Hz, {report['channels']} ch, "
           f"{report['block_size']} frame blocks (~{report['latency_ms']} ms)")
@@ -182,6 +185,16 @@ def main(argv: list[str] | None = None) -> int:
     eq_commands.add_parser("list", help="list the presets CapTune shipped")
     eq_commands.add_parser("calibrations", help="list measured headphone corrections")
 
+    crossfeed_parser = eq_commands.add_parser(
+        "crossfeed", help="set the crossfeed strength while running"
+    )
+    crossfeed_parser.add_argument("strength", type=int, metavar="0-100")
+
+    loudness_parser = eq_commands.add_parser(
+        "loudness", help="set the listening level for equal-loudness compensation"
+    )
+    loudness_parser.add_argument("phon", help="listening level in phon (0-90), or 'off'")
+
     calibrate = eq_commands.add_parser(
         "calibrate", help="apply or remove a headphone correction while running"
     )
@@ -194,6 +207,12 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--preset", default="Neutral", help="preset to start with")
     start.add_argument("--calibration", default=None,
                        help="measured headphone correction to apply first, e.g. 'HD 4.50 BTNC'")
+    start.add_argument("--crossfeed", type=int, default=0, metavar="0-100",
+                       help="narrow the stereo image at low frequencies")
+    start.add_argument("--loudness", type=float, default=None, metavar="PHON",
+                       help="listening level, for equal-loudness compensation (0-90)")
+    start.add_argument("--reference-phon", type=float, default=80.0, metavar="PHON",
+                       help="level the music was balanced at (default 80)")
     start.add_argument("--bass", type=int, default=0, metavar="0-100")
     start.add_argument("--treble", type=int, default=0, metavar="0-100")
     start.add_argument("--block-size", type=int, default=512,
@@ -254,6 +273,9 @@ def main(argv: list[str] | None = None) -> int:
                         output_device=arguments.output,
                         preset=arguments.preset,
                         calibration=arguments.calibration,
+                        crossfeed=arguments.crossfeed,
+                        loudness_phon=arguments.loudness,
+                        reference_phon=arguments.reference_phon,
                         bass=arguments.bass,
                         treble=arguments.treble,
                         sample_rate=arguments.sample_rate,
@@ -293,6 +315,20 @@ def main(argv: list[str] | None = None) -> int:
                 for entry in found.values():
                     print(f"  {entry.name}  ({len(entry.filters)} filters)")
                     print(f"    {entry.description}")
+                return 0
+
+            if arguments.eq_command == "crossfeed":
+                report = daemon.set_crossfeed(arguments.strength)
+                print(f"Crossfeed is now {report['crossfeed']}%.")
+                return 0
+
+            if arguments.eq_command == "loudness":
+                phon = None if arguments.phon.lower() == "off" else float(arguments.phon)
+                report = daemon.set_loudness(phon)
+                print(
+                    f"Loudness compensation is now {'off' if phon is None else f'{phon:g} phon'} "
+                    f"(preamp {report['preamp_db']:+.1f} dB)."
+                )
                 return 0
 
             if arguments.eq_command == "calibrate":

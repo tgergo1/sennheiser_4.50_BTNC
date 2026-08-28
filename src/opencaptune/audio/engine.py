@@ -11,6 +11,8 @@ import threading
 from dataclasses import asdict, dataclass, field
 
 from .. import eq
+from ..eq import loudness as loudness_module
+from .crossfeed import Crossfeed
 from .devices import Device, resolve
 from .dsp import Equaliser
 
@@ -21,6 +23,9 @@ class EngineConfig:
     output_device: str | int
     preset: str = "Neutral"
     calibration: str | None = None
+    loudness_phon: float | None = None
+    reference_phon: float = loudness_module.DEFAULT_REFERENCE_PHON
+    crossfeed: int = 0
     bass: int = 0
     treble: int = 0
     sample_rate: int | None = None
@@ -61,17 +66,40 @@ class Engine:
         if self.channels < 1:
             raise ValueError("the chosen devices have no usable channels in common")
 
+        self._crossfeed = Crossfeed(
+            strength=config.crossfeed, sample_rate=self.sample_rate, channels=self.channels
+        )
         self._equaliser = Equaliser(
             self._preset_from(config.preset, config.bass, config.treble),
             sample_rate=self.sample_rate,
             channels=self.channels,
             q=config.q,
             calibration=eq.calibration(config.calibration) if config.calibration else None,
+            loudness=self._loudness_filters(config.loudness_phon, config.reference_phon),
         )
 
     @staticmethod
     def _preset_from(name: str, bass: int, treble: int) -> eq.Preset:
         return eq.preset(name).with_boosts(bass=bass, treble=treble)
+
+    @staticmethod
+    def _loudness_filters(phon: float | None, reference: float):
+        if phon is None:
+            return ()
+        return loudness_module.compensation(phon, reference)
+
+    def set_loudness(self, phon: float | None) -> None:
+        """Change the level compensation while streaming."""
+        filters = self._loudness_filters(phon, self.config.reference_phon)
+        with self._lock:
+            self._equaliser.set_loudness(filters)
+        self.config.loudness_phon = phon
+
+    def set_crossfeed(self, strength: int) -> None:
+        """Change the crossfeed strength while streaming."""
+        with self._lock:
+            self._crossfeed.set_strength(strength)
+        self.config.crossfeed = strength
 
     @property
     def preset(self) -> eq.Preset:
@@ -103,7 +131,7 @@ class Engine:
         if status:
             self.stats.glitches += 1
         with self._lock:
-            filtered = self._equaliser.process(indata)
+            filtered = self._equaliser.process(self._crossfeed.process(indata))
         outdata[:] = filtered
         self.stats.frames += frames
         peak = float(abs(filtered).max()) if frames else 0.0
@@ -143,6 +171,8 @@ class Engine:
             "calibration": (
                 self._equaliser.calibration.name if self._equaliser.calibration else None
             ),
+            "loudness_phon": self.config.loudness_phon,
+            "crossfeed": self._crossfeed.strength,
             "preamp_db": round(self._equaliser.preamp_db, 2),
             "latency_ms": round(self.config.block_size / self.sample_rate * 1000, 1),
             "frames": self.stats.frames,

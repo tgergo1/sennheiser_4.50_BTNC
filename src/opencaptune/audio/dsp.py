@@ -19,9 +19,10 @@ def sections_for(
     sample_rate: int,
     q: float | None = None,
     calibration: eq.Calibration | None = None,
+    loudness=None,
 ) -> np.ndarray:
     """Second-order sections for the whole chain, in SciPy's ``sos`` layout."""
-    chain = eq.filter_chain(eq.chain(preset, calibration, q), sample_rate)
+    chain = eq.filter_chain(eq.chain(preset, calibration, loudness, q), sample_rate)
     if not chain:
         return np.zeros((0, 6), dtype=np.float64)
     return np.array(
@@ -42,6 +43,7 @@ class Equaliser:
         auto_headroom: bool = True,
         fade_ms: float = 20.0,
         calibration: eq.Calibration | None = None,
+        loudness=None,
     ) -> None:
         if channels < 1:
             raise ValueError("an equaliser needs at least one channel")
@@ -49,6 +51,7 @@ class Equaliser:
         self.channels = channels
         self._q = q
         self._calibration = calibration
+        self._loudness = tuple(loudness) if loudness else ()
         self._auto_headroom = auto_headroom
         self._fade_frames = max(1, int(sample_rate * fade_ms / 1000.0))
         self._state = np.zeros((0, 2, channels))
@@ -67,9 +70,18 @@ class Equaliser:
     def calibration(self) -> eq.Calibration | None:
         return self._calibration
 
+    @property
+    def loudness(self) -> tuple:
+        return self._loudness
+
     def set_calibration(self, calibration: eq.Calibration | None, fade: bool = True) -> None:
-        """Swap the headphone correction, keeping the current preset."""
+        """Swap the headphone correction, keeping everything else."""
         self._calibration = calibration
+        self.set_preset(self._preset, fade=fade)
+
+    def set_loudness(self, loudness, fade: bool = True) -> None:
+        """Swap the level compensation, keeping everything else."""
+        self._loudness = tuple(loudness) if loudness else ()
         self.set_preset(self._preset, fade=fade)
 
     def set_preset(self, preset: eq.Preset, fade: bool = True) -> None:
@@ -86,7 +98,9 @@ class Equaliser:
             else None
         )
 
-        sections = sections_for(preset, self.sample_rate, self._q, self._calibration)
+        sections = sections_for(
+            preset, self.sample_rate, self._q, self._calibration, self._loudness
+        )
         if sections.shape[0] != self._state.shape[0]:
             self._state = np.zeros((sections.shape[0], 2, self.channels))
         elif previous is not None:
@@ -95,7 +109,9 @@ class Equaliser:
         self._sections = sections
         self._preset = preset
         self._preamp_db = (
-            eq.preamp_db(eq.chain(preset, self._calibration, self._q), self.sample_rate)
+            eq.preamp_db(
+                eq.chain(preset, self._calibration, self._loudness, self._q), self.sample_rate
+            )
             if self._auto_headroom
             else 0.0
         )

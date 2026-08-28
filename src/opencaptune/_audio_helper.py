@@ -56,6 +56,13 @@ def _serve(engine: Engine, socket_path: Path, log: Path) -> None:
                             treble=request.get("treble", 0),
                         )
                         response = {"ok": True, **engine.status()}
+                    elif action == "set_crossfeed":
+                        engine.set_crossfeed(int(request["crossfeed"]))
+                        response = {"ok": True, **engine.status()}
+                    elif action == "set_loudness":
+                        phon = request.get("phon")
+                        engine.set_loudness(float(phon) if phon is not None else None)
+                        response = {"ok": True, **engine.status()}
                     elif action == "set_calibration":
                         engine.set_calibration(request.get("calibration"))
                         response = {"ok": True, **engine.status()}

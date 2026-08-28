@@ -36,7 +36,7 @@ Worth doing properly: randomise presentation order, level-match the pair (an
 uncompensated level difference is heard as "better"), and allow "no
 preference".
 
-### 3. Crossfeed / the "Virtualizer" — *high confidence, low effort*
+### 3. Crossfeed / the "Virtualizer" — **done**
 
 CapTune had `setVirtualizerStrength`. On headphones each ear hears only its own
 channel, which is why hard-panned mixes feel like they are inside your head.
@@ -59,7 +59,7 @@ real architectural upgrade:
 The catch is that taps need their own TCC permission and a private aggregate
 device, so it is a genuine build rather than a swap.
 
-### 5. Real loudness compensation — *high confidence, low effort*
+### 5. Real loudness compensation — **done**
 
 Human hearing loses bass and treble at low volume (ISO 226 equal-loudness
 contours). CapTune's "Loudness" preset is a fixed approximation of this. A

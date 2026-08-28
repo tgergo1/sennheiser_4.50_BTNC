@@ -235,10 +235,18 @@ def preset_filters(values: Preset, q: float | None = None) -> list[Filter]:
 def chain(
     values: Preset | None = None,
     calibration: Calibration | None = None,
+    loudness=None,
     q: float | None = None,
 ) -> list[Filter]:
-    """The full signal chain: correct the headphones first, then apply taste."""
+    """The full signal chain, in the order the corrections make sense.
+
+    First fix the headphones, which is a property of the hardware. Then fix the
+    ear at this listening level, which is a property of physiology. Only then
+    apply taste.
+    """
     sections: list[Filter] = list(calibration.filters) if calibration else []
+    if loudness:
+        sections.extend(loudness)
     if values is not None:
         sections.extend(preset_filters(values, q))
     return sections

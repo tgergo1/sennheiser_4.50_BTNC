@@ -180,3 +180,46 @@ def test_a_second_change_during_a_fade_does_not_stack_filters():
     equaliser.process(tone(1000, frames=4096).astype(np.float32))
     assert not equaliser.fading
     assert equaliser.preset.name == "Voice"
+
+
+def test_swapping_the_calibration_keeps_the_preset_and_rebuilds_the_chain():
+    calibration = eq.calibration("HD 4.50 BTNC")
+    equaliser = dsp.Equaliser(eq.preset("Rock"), RATE)
+    plain = equaliser._sections.shape[0]
+
+    equaliser.set_calibration(calibration)
+    assert equaliser.preset.name == "Rock"
+    assert equaliser.calibration is calibration
+    assert equaliser._sections.shape[0] == plain + len(calibration.filters)
+
+    equaliser.set_calibration(None)
+    assert equaliser.calibration is None
+    assert equaliser._sections.shape[0] == plain
+
+
+def test_swapping_the_loudness_keeps_the_preset_and_the_calibration():
+    from opencaptune.eq import loudness as loudness_module
+
+    calibration = eq.calibration("HD 4.50 BTNC")
+    equaliser = dsp.Equaliser(eq.preset("Rock"), RATE, calibration=calibration)
+    before = equaliser._sections.shape[0]
+
+    compensation = loudness_module.compensation(60.0)
+    equaliser.set_loudness(compensation)
+    assert equaliser.preset.name == "Rock"
+    assert equaliser.calibration is calibration
+    assert equaliser.loudness == compensation
+    assert equaliser._sections.shape[0] == before + len(compensation)
+
+    equaliser.set_loudness(None)
+    assert equaliser.loudness == ()
+    assert equaliser._sections.shape[0] == before
+
+
+def test_more_correction_means_more_headroom_is_taken():
+    from opencaptune.eq import loudness as loudness_module
+
+    equaliser = dsp.Equaliser(eq.preset("Neutral"), RATE)
+    assert equaliser.preamp_db == 0.0
+    equaliser.set_loudness(loudness_module.compensation(50.0))
+    assert equaliser.preamp_db < -5.0

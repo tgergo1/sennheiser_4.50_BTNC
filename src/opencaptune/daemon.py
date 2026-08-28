@@ -74,6 +74,14 @@ def set_preset(name: str, bass: int = 0, treble: int = 0) -> dict:
     return _request({"action": "set_preset", "preset": name, "bass": bass, "treble": treble})
 
 
+def set_crossfeed(strength: int) -> dict:
+    return _request({"action": "set_crossfeed", "crossfeed": strength})
+
+
+def set_loudness(phon: float | None) -> dict:
+    return _request({"action": "set_loudness", "phon": phon})
+
+
 def set_calibration(name: str | None) -> dict:
     return _request({"action": "set_calibration", "calibration": name})
 

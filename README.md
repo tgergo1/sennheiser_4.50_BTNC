@@ -120,6 +120,48 @@ hear what it does.
 Verified against the hardware at six frequencies, exercising both shelves and
 the largest cut and boost, to within 0.3% of the predicted response.
 
+## Crossfeed
+
+On speakers each ear hears both channels; on headphones each hears only its
+own, which is a cue the brain never gets naturally, and hard-panned mixes end
+up localised inside your head.
+
+```
+captune eq crossfeed 60
+```
+
+The usual construction mixes a low-passed copy of each channel into the other,
+which sums correlated content and builds up bass on mono material, then needs a
+compensating shelf to undo the damage. This works on mid and side instead:
+the side signal is shelved down below 700 Hz and mid is left strictly alone, so
+mono passes through bit-identically and the image above the corner is
+untouched. Measured on hardware at full strength: −10.05 dB on side content at
+80 Hz, 0.00 dB on mono, 0.00 dB on side at 8 kHz.
+
+It omits the interaural delay a full head-related model would have. That trade
+buys exactness — there is nothing here that needs correcting afterwards.
+
+## Loudness compensation
+
+Hearing loses bass and treble at low volume — physiology, not taste. Music is
+balanced at one level and usually played at another, so quiet listening is
+genuinely thinner than intended.
+
+```
+captune eq loudness 60      # roughly how loud you are actually listening, in phon
+captune eq loudness off
+```
+
+CapTune's "Loudness" preset was a fixed curve: right at exactly one level and
+wrong everywhere else. This computes the correction for the level you are at,
+as the difference between two ISO 226:2003 equal-loudness contours, and applies
+nothing at all when playback matches the reference. At 60 phon against an
+80 phon reference it lifts 50 Hz by about 10 dB relative to 1 kHz.
+
+It cannot know your actual sound pressure level — that needs the headphone's
+sensitivity and the amplifier gain — so you tell it roughly where you are.
+Verified against the hardware to within 0.07 dB.
+
 ## Using the presets somewhere else
 
 ```
@@ -139,6 +181,8 @@ available.
 | `captune eq list` | the presets CapTune shipped |
 | `captune eq calibrations` | measured headphone corrections |
 | `captune eq calibrate NAME\|off` | apply or remove a correction while running |
+| `captune eq crossfeed 0-100` | narrow the stereo image at low frequencies |
+| `captune eq loudness PHON\|off` | equal-loudness compensation for your listening level |
 | `captune eq show NAME [--bass N] [--treble N]` | display a curve |
 | `captune eq export NAME [--format apo\|json\|biquad]` | write a curve out |
 | `captune eq start --input DEV --output DEV` | start the always-on equaliser |

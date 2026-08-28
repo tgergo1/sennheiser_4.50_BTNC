@@ -74,6 +74,10 @@ def set_preset(name: str, bass: int = 0, treble: int = 0) -> dict:
     return _request({"action": "set_preset", "preset": name, "bass": bass, "treble": treble})
 
 
+def set_calibration(name: str | None) -> dict:
+    return _request({"action": "set_calibration", "calibration": name})
+
+
 def reset_stats() -> dict:
     return _request({"action": "reset_stats"})
 

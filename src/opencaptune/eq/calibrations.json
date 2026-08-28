@@ -1,0 +1,70 @@
+{
+  "calibrations": [
+    {
+      "name": "HD 4.50 BTNC",
+      "source": "oratory1990 measurement, corrected to the Harman over-ear target; via AutoEq (results/oratory1990/over-ear/Sennheiser HD 4.50 BTNC)",
+      "filters": [
+        {
+          "kind": "LSC",
+          "frequency": 105.0,
+          "gain_db": 0.5,
+          "q": 0.7
+        },
+        {
+          "kind": "PK",
+          "frequency": 2008.0,
+          "gain_db": -7.2,
+          "q": 1.15
+        },
+        {
+          "kind": "PK",
+          "frequency": 3876.0,
+          "gain_db": 8.2,
+          "q": 2.31
+        },
+        {
+          "kind": "PK",
+          "frequency": 343.0,
+          "gain_db": 3.0,
+          "q": 1.23
+        },
+        {
+          "kind": "PK",
+          "frequency": 1009.0,
+          "gain_db": -1.5,
+          "q": 1.29
+        },
+        {
+          "kind": "HSC",
+          "frequency": 10000.0,
+          "gain_db": 6.1,
+          "q": 0.7
+        },
+        {
+          "kind": "PK",
+          "frequency": 8429.0,
+          "gain_db": -5.3,
+          "q": 2.76
+        },
+        {
+          "kind": "PK",
+          "frequency": 68.0,
+          "gain_db": -0.4,
+          "q": 1.17
+        },
+        {
+          "kind": "PK",
+          "frequency": 6496.0,
+          "gain_db": 2.4,
+          "q": 5.05
+        },
+        {
+          "kind": "PK",
+          "frequency": 9714.0,
+          "gain_db": -1.9,
+          "q": 5.91
+        }
+      ]
+    }
+  ]
+}

@@ -80,13 +80,27 @@ def _curve(gains: tuple[float, ...], width: int = 21) -> list[str]:
     return rows
 
 
-def _print_preset(preset) -> None:
-    print(f"{preset.name}\n")
-    rows = _curve(preset.gains_db)
-    for frequency, gain, row in zip(equaliser.bands(), preset.gains_db, rows):
+def _print_preset(preset, calibration=None) -> None:
+    title = preset.name if calibration is None else f"{preset.name} + {calibration.name}"
+    print(f"{title}\n")
+
+    if calibration is None:
+        gains = preset.gains_db
+    else:
+        # With a calibration in the chain the preset's own numbers no longer
+        # describe what you hear, so show the measured response instead.
+        chain = equaliser.chain(preset, calibration)
+        gains = tuple(equaliser.response_db(chain, f, 48000) for f in equaliser.bands())
+
+    for frequency, gain, row in zip(equaliser.bands(), gains, _curve(gains)):
         label = f"{frequency} Hz" if frequency < 1000 else f"{frequency / 1000:.3g} kHz"
         print(f"  {label:>9}  {gain:+6.2f} dB  {row}")
+
     print(f"\n  Q {equaliser.default_q():.2f} ({equaliser.band_width_octaves():.2f} octave bands)")
+    if calibration is not None:
+        preamp = equaliser.preamp_db(equaliser.chain(preset, calibration), 48000)
+        print(f"  preamp {preamp:+.1f} dB")
+        print(f"  calibration: {calibration.description}")
 
 
 def _export(preset, style: str, sample_rate: int) -> str:
@@ -122,7 +136,9 @@ def _export(preset, style: str, sample_rate: int) -> str:
 
 
 def _print_status(report: dict) -> None:
+    correction = report.get("calibration")
     print(f"  preset      {report['preset']}  (preamp {report['preamp_db']:+.1f} dB)")
+    print(f"  calibration {correction or 'off'}")
     print(f"  routing     {report['input']} -> {report['output']}")
     print(f"  format      {report['sample_rate']} Hz, {report['channels']} ch, "
           f"{report['block_size']} frame blocks (~{report['latency_ms']} ms)")
@@ -164,12 +180,20 @@ def main(argv: list[str] | None = None) -> int:
     eq_parser = subcommands.add_parser("eq", help="CapTune's equaliser presets")
     eq_commands = eq_parser.add_subparsers(dest="eq_command", required=True)
     eq_commands.add_parser("list", help="list the presets CapTune shipped")
+    eq_commands.add_parser("calibrations", help="list measured headphone corrections")
+
+    calibrate = eq_commands.add_parser(
+        "calibrate", help="apply or remove a headphone correction while running"
+    )
+    calibrate.add_argument("calibration", help="calibration name, or 'off'")
 
     start = eq_commands.add_parser("start", help="start the always-on equaliser")
     start.add_argument("--input", default="BlackHole",
                        help="device to read from, normally a virtual output device")
     start.add_argument("--output", required=True, help="device to play to, e.g. your headphones")
     start.add_argument("--preset", default="Neutral", help="preset to start with")
+    start.add_argument("--calibration", default=None,
+                       help="measured headphone correction to apply first, e.g. 'HD 4.50 BTNC'")
     start.add_argument("--bass", type=int, default=0, metavar="0-100")
     start.add_argument("--treble", type=int, default=0, metavar="0-100")
     start.add_argument("--block-size", type=int, default=512,
@@ -194,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
                              help="bass boost strength, as CapTune's slider")
         command.add_argument("--treble", type=int, default=0, metavar="0-100",
                              help="treble boost strength, as CapTune's slider")
+        command.add_argument("--calibration", default=None,
+                             help="stack the preset on a measured headphone correction")
         if name == "export":
             command.add_argument("--format", default="apo", choices=("apo", "json", "biquad"),
                                  help="apo: EqualizerAPO/AutoEQ parametric text (default)")
@@ -227,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
                         input_device=arguments.input,
                         output_device=arguments.output,
                         preset=arguments.preset,
+                        calibration=arguments.calibration,
                         bass=arguments.bass,
                         treble=arguments.treble,
                         sample_rate=arguments.sample_rate,
@@ -258,6 +285,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Preset is now {report['preset']} (preamp {report['preamp_db']:+.1f} dB).")
                 return 0
 
+            if arguments.eq_command == "calibrations":
+                found = equaliser.calibrations()
+                if not found:
+                    print("No calibrations are shipped.")
+                    return 0
+                for entry in found.values():
+                    print(f"  {entry.name}  ({len(entry.filters)} filters)")
+                    print(f"    {entry.description}")
+                return 0
+
+            if arguments.eq_command == "calibrate":
+                name = None if arguments.calibration.lower() == "off" else arguments.calibration
+                daemon.set_calibration(name)
+                print(f"Calibration is now {name or 'off'}.")
+                return 0
+
             if arguments.eq_command == "list":
                 for preset in equaliser.presets().values():
                     span = f"{min(preset.gains_db):+.1f} to {max(preset.gains_db):+.1f} dB"
@@ -266,10 +309,13 @@ def main(argv: list[str] | None = None) -> int:
             preset = equaliser.preset(arguments.preset).with_boosts(
                 bass=arguments.bass, treble=arguments.treble
             )
+            correction = (
+                equaliser.calibration(arguments.calibration) if arguments.calibration else None
+            )
             if arguments.eq_command == "show":
-                _print_preset(preset)
+                _print_preset(preset, correction)
             else:
-                print(_export(preset, arguments.format, arguments.sample_rate))
+                print(_export(preset, arguments.format, arguments.sample_rate, correction))
             return 0
 
         if arguments.command == "devices":

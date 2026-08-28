@@ -20,6 +20,7 @@ class EngineConfig:
     input_device: str | int
     output_device: str | int
     preset: str = "Neutral"
+    calibration: str | None = None
     bass: int = 0
     treble: int = 0
     sample_rate: int | None = None
@@ -65,6 +66,7 @@ class Engine:
             sample_rate=self.sample_rate,
             channels=self.channels,
             q=config.q,
+            calibration=eq.calibration(config.calibration) if config.calibration else None,
         )
 
     @staticmethod
@@ -82,6 +84,13 @@ class Engine:
     def reset_stats(self) -> None:
         """Clear the counters, e.g. after fixing a source of glitches."""
         self.stats = Stats()
+
+    def set_calibration(self, name: str | None) -> None:
+        """Change the headphone correction while streaming."""
+        replacement = eq.calibration(name) if name else None
+        with self._lock:
+            self._equaliser.set_calibration(replacement)
+        self.config.calibration = name
 
     def set_preset(self, name: str, bass: int = 0, treble: int = 0) -> None:
         """Change curve while streaming."""
@@ -131,6 +140,9 @@ class Engine:
             "channels": self.channels,
             "block_size": self.config.block_size,
             "preset": self.preset.name,
+            "calibration": (
+                self._equaliser.calibration.name if self._equaliser.calibration else None
+            ),
             "preamp_db": round(self._equaliser.preamp_db, 2),
             "latency_ms": round(self.config.block_size / self.sample_rate * 1000, 1),
             "frames": self.stats.frames,

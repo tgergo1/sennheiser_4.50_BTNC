@@ -99,6 +99,27 @@ maximum, so use `captune eq status --reset` before measuring anything.
 **To hear your Mac normally again**, set the output device back and
 `captune eq stop`.
 
+## Headphone calibration
+
+Presets are taste. A calibration is measurement: what this particular model
+gets wrong, from a rig. oratory1990 measured the HD 4.50 BTNC and AutoEq
+publishes the correction to the Harman over-ear target; it ships here.
+
+```
+captune eq calibrations
+captune eq start --input "BlackHole 2ch" --output "YourHeadphones" \
+  --preset Neutral --calibration "HD 4.50 BTNC"
+```
+
+It is not a subtle correction — −7.2 dB at 2 kHz and +8.2 dB at 3.9 kHz — and
+it is the single biggest improvement available to these headphones. Presets
+stack on top of it: the calibration fixes the headphones, the preset is taste.
+`captune eq calibrate off` removes it while running, which is the honest way to
+hear what it does.
+
+Verified against the hardware at six frequencies, exercising both shelves and
+the largest cut and boost, to within 0.3% of the predicted response.
+
 ## Using the presets somewhere else
 
 ```
@@ -116,6 +137,8 @@ available.
 | Command | Purpose |
 | --- | --- |
 | `captune eq list` | the presets CapTune shipped |
+| `captune eq calibrations` | measured headphone corrections |
+| `captune eq calibrate NAME\|off` | apply or remove a correction while running |
 | `captune eq show NAME [--bass N] [--treble N]` | display a curve |
 | `captune eq export NAME [--format apo\|json\|biquad]` | write a curve out |
 | `captune eq start --input DEV --output DEV` | start the always-on equaliser |
@@ -125,6 +148,13 @@ available.
 | `captune devices` | list paired Bluetooth devices |
 | `captune survey ADDR` | report a headphone's control channel, if any |
 | `captune bundle` | rebuild the macOS helper bundle |
+
+## What else is possible
+
+[docs/ROADMAP.md](docs/ROADMAP.md) inventories what can still be built — from
+crossfeed and a rebuilt SoundCheck wizard, through probing the HFP channel from
+Linux for an undiscovered control surface, to opening the headphones and
+editing the CSR chip's persistent store over SPI.
 
 ## How the presets were recovered
 

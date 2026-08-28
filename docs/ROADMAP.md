@@ -1,0 +1,186 @@
+# What can actually be done with an HD 4.50 BTNC
+
+The headset exposes no control channel ([FINDINGS.md](FINDINGS.md)), so the
+work splits cleanly in two: everything reachable from the host, and everything
+that needs a screwdriver.
+
+Each item is marked with how confident I am that it works, and roughly what it
+costs. Nothing below is speculative about the *headphones* — the uncertainty is
+in effort, not feasibility, unless it says otherwise.
+
+## Tier 1 — host side, no hardware
+
+### 1. Measured headphone calibration — **done**
+
+oratory1990 measured this exact model on a rig; AutoEq publishes the correction
+to the Harman over-ear target. It is now shipped and verified on hardware to
+within 0.3%.
+
+```
+captune eq start --calibration "HD 4.50 BTNC" --preset Neutral \
+  --input "BlackHole 2ch" --output "YourHeadphones"
+```
+
+This is the single largest sound improvement available. The correction is not
+subtle: −7.2 dB at 2 kHz and +8.2 dB at 3.9 kHz. Presets stack on top —
+calibration fixes the headphones, the preset is taste.
+
+### 2. Rebuild SoundCheck — *high confidence, moderate effort*
+
+CapTune's best feature: a blind A/B wizard that converged on a personal curve
+by asking which of two renderings you preferred. Nothing about it needed the
+headphones. A paired-comparison procedure over a few tilt and band-gain
+parameters converges in 15–20 comparisons.
+
+Worth doing properly: randomise presentation order, level-match the pair (an
+uncompensated level difference is heard as "better"), and allow "no
+preference".
+
+### 3. Crossfeed / the "Virtualizer" — *high confidence, low effort*
+
+CapTune had `setVirtualizerStrength`. On headphones each ear hears only its own
+channel, which is why hard-panned mixes feel like they are inside your head.
+Crossfeed mixes a delayed, low-passed copy of each channel into the other.
+Bauer and Meier designs are well documented and are a handful of biquads plus a
+delay line — it fits the existing engine directly.
+
+### 4. Per-application equalisation — *verified available, moderate effort*
+
+macOS 14.2+ has CoreAudio process taps, and I confirmed the bindings exist in
+PyObjC (`CATapDescription`, `AudioHardwareCreateProcessTap`). This would be a
+real architectural upgrade:
+
+- **No BlackHole.** No driver install, no output-device switching, no
+  `coreaudiod` restart problem.
+- **Per-app curves.** A different preset for music than for video calls.
+- `CATapDescription` can exclude processes, so the equaliser's own output does
+  not feed back into its input.
+
+The catch is that taps need their own TCC permission and a private aggregate
+device, so it is a genuine build rather than a swap.
+
+### 5. Real loudness compensation — *high confidence, low effort*
+
+Human hearing loses bass and treble at low volume (ISO 226 equal-loudness
+contours). CapTune's "Loudness" preset is a fixed approximation of this. A
+correct version tracks the actual playback level and interpolates between
+contours, so it stops applying the boost as you turn it up.
+
+### 6. Battery and status — *trivial*
+
+macOS already knows the charge level over HFP; `captune devices` could surface
+it, along with connection state and the negotiated codec.
+
+## Tier 2 — protocol probing, still no soldering
+
+macOS owns HFP and AVRCP and will not share them, so all of this needs a Linux
+host — a Raspberry Pi is enough.
+
+### 7. The HFP AT command channel — *unexplored, genuinely worth trying*
+
+HFP is a serial protocol carrying AT commands, and vendors add their own. Apple
+devices send `AT+XAPL` and receive `AT+IPHONEACCEV` for battery. Sennheiser may
+well have vendor commands here — this is the one plausible remaining control
+surface on a headset with no SPP, and nobody appears to have looked.
+
+On Linux, take over the HFP channel with BlueZ and try. Low cost, real chance
+of a surprise.
+
+### 8. AVRCP vendor-dependent PDUs — *unexplored, lower odds*
+
+The headset advertises A/V Remote Control **Target** *and* **Controller**, so it
+both sends and receives. AVRCP allows vendor-dependent commands carrying a
+company ID. Worth a probe once you own the channel.
+
+### 9. A raw SDP browse from Linux — *cheap, closes a gap*
+
+`sdptool browse` reports what the device actually returns rather than what
+macOS chose to cache, and an unrestricted RFCOMM channel sweep is possible
+there. This closes the one caveat in FINDINGS.md.
+
+### 10. The USB port — *unknown, costs nothing to check*
+
+The micro-USB port is documented for charging. CSR BlueCore parts do have USB
+support, and if the port enumerates at all it is a control surface. Plug it
+into the Mac and look:
+
+```
+system_profiler SPUSBDataType | grep -iA6 "sennheiser\|CSR\|Cambridge"
+```
+
+Most likely it is charge-only. It takes ten seconds to find out.
+
+## Tier 3 — hardware, where custom firmware lives
+
+This voids the warranty and can brick the headphones. It is also where the real
+control is.
+
+### 11. Identify the chip
+
+The PnP record reports Bluetooth SIG vendor `0x0A12` — Cambridge Silicon Radio
+— so it is a BlueCore part. Given a 2017 ANC headset with aptX, CSR8670 is the
+strong expectation, with CSR8675 possible. **This is an inference, not a
+measurement**; the FCC internal photos (FCC ID `DMOSCBT6`) would settle it, and
+so would simply reading the chip once the case is open.
+
+Either way both are BlueCore and both work with the tooling below.
+
+### 12. Get in
+
+iFixit has a motherboard replacement guide for the HD 4.50, so the teardown is
+documented. You are looking for the SPI debug pads: `SPI_CLK`, `SPI_MOSI`,
+`SPI_MISO`, `SPI_CS#` and ground, usually exposed as test points.
+
+### 13. Build the programmer — about $5
+
+CSR BlueCore chips have an SPI debug interface in ROM. [csr-spi-ftdi](https://github.com/lorf/csr-spi-ftdi)
+is an open-source driver that lets the official CSR BlueSuite tools talk to the
+chip through a cheap FT232RL breakout board. No proprietary programmer needed.
+
+### 14. Dump everything, before writing anything
+
+Read the full PS Key store and firmware to a file and keep it somewhere safe.
+This is the difference between an experiment and an expensive mistake. The SPI
+interface lives in ROM, so recovery is usually possible even after a bad write
+— but only if you have something to write back.
+
+### 15. PS Key editing — the realistic ceiling
+
+CSR designs put a surprising amount of behaviour in the persistent store rather
+than in code, and PSTool can edit it:
+
+| Key | What it controls |
+| --- | --- |
+| `PSKEY_DEVICE_NAME` | the Bluetooth name, permanently — not a host-side alias |
+| `PSKEY_DEVICE_CLASS` | how the headset presents itself to hosts |
+| `PSKEY_USR0`–`USR49` | application-specific: this is where a vendor puts ANC parameters, DSP settings, button behaviour and timers |
+| charger keys | battery thresholds and charge current |
+| radio keys | transmit power, and so range |
+
+Plausible wins: change the auto-power-off timeout, silence or change the voice
+prompts, re-tune the ANC, remap the buttons, extend range.
+
+**The `USR` keys are where the interesting stuff is, and they are undocumented
+by definition** — they mean whatever Sennheiser's firmware decides. Finding out
+means changing one, listening, and writing down what happened. That is the
+actual DIY project.
+
+### 16. Custom firmware — the honest limit
+
+The chip runs a VM application built with the CSR ADK, which is NDA-locked, and
+the audio DSP is Kalimba with its own proprietary toolchain. Writing genuinely
+new firmware is not realistically on the table without those.
+
+What *is* on the table: flashing a different stock image, and reconfiguring
+behaviour through PS Keys — which on CSR designs covers more than you would
+expect.
+
+## Suggested order
+
+1. Use the calibration. It is done and it is the biggest audible change.
+2. Check the USB port. Ten seconds, small chance of a real find.
+3. Build crossfeed and loudness compensation. Cheap, and they make the
+   headphones nicer every day.
+4. Put a Linux box on the HFP channel. This is the most likely place for an
+   undiscovered control surface.
+5. Then, if the itch remains, open it up — dump first, edit second.

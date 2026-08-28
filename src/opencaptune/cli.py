@@ -178,7 +178,9 @@ def main(argv: list[str] | None = None) -> int:
                        help="defaults to the output device's own rate")
 
     eq_commands.add_parser("stop", help="stop the equaliser")
-    eq_commands.add_parser("status", help="show what the equaliser is doing")
+    show_status = eq_commands.add_parser("status", help="show what the equaliser is doing")
+    show_status.add_argument("--reset", action="store_true",
+                             help="clear the frame, glitch and peak counters afterwards")
 
     live = eq_commands.add_parser("set", help="change preset while running")
     live.add_argument("preset")
@@ -246,6 +248,9 @@ def main(argv: list[str] | None = None) -> int:
                     return 1
                 print("Equaliser running.")
                 _print_status(daemon.status())
+                if arguments.reset:
+                    daemon.reset_stats()
+                    print("  counters cleared")
                 return 0
 
             if arguments.eq_command == "set":

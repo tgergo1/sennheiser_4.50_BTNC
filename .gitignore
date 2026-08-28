@@ -4,5 +4,11 @@ __pycache__/
 dist/
 build/
 *.egg-info/
-research/apk/
-research/decompiled/
+.DS_Store
+
+# Local reverse-engineering working material: the CapTune APK, its unpacked
+# contents and the decompiled sources. Sennheiser's copyrighted application —
+# never commit or redistribute it. Only the factual data extracted from it
+# (band frequencies and preset gains) lives in the package, with provenance
+# recorded in docs/FINDINGS.md.
+research/

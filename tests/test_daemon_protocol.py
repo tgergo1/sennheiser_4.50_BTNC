@@ -21,6 +21,9 @@ class StubEngine:
     def status(self):
         return {"running": True, "preset": "Neutral", "frames": 4096}
 
+    def reset_stats(self):
+        self.reset_calls = getattr(self, "reset_calls", 0) + 1
+
     def set_preset(self, name, bass=0, treble=0):
         if name == "Nonsense":
             raise KeyError("unknown preset 'Nonsense'")
@@ -71,6 +74,11 @@ def test_an_engine_error_comes_back_as_a_failure_not_a_crash(running_daemon):
         daemon.set_preset("Nonsense")
     # The daemon must survive a bad request.
     assert daemon.is_running()
+
+
+def test_reset_stats_reaches_the_engine(running_daemon):
+    daemon.reset_stats()
+    assert running_daemon.reset_calls == 1
 
 
 def test_stop_shuts_down_and_removes_the_socket(running_daemon, control_socket):

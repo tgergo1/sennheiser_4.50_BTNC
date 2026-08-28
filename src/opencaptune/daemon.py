@@ -74,6 +74,10 @@ def set_preset(name: str, bass: int = 0, treble: int = 0) -> dict:
     return _request({"action": "set_preset", "preset": name, "bass": bass, "treble": treble})
 
 
+def reset_stats() -> dict:
+    return _request({"action": "reset_stats"})
+
+
 def stop() -> None:
     _request({"action": "stop"})
     for _ in range(50):

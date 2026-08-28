@@ -79,6 +79,10 @@ class Engine:
     def running(self) -> bool:
         return self._stream is not None and self._stream.active
 
+    def reset_stats(self) -> None:
+        """Clear the counters, e.g. after fixing a source of glitches."""
+        self.stats = Stats()
+
     def set_preset(self, name: str, bass: int = 0, treble: int = 0) -> None:
         """Change curve while streaming."""
         replacement = self._preset_from(name, bass, treble)

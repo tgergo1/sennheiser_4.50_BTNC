@@ -56,6 +56,9 @@ def _serve(engine: Engine, socket_path: Path, log: Path) -> None:
                             treble=request.get("treble", 0),
                         )
                         response = {"ok": True, **engine.status()}
+                    elif action == "reset_stats":
+                        engine.reset_stats()
+                        response = {"ok": True, **engine.status()}
                     elif action == "stop":
                         response = {"ok": True, "stopping": True}
                     else:

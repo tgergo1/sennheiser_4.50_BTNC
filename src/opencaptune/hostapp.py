@@ -54,6 +54,18 @@ def bundle_path() -> Path:
     return support_dir() / BUNDLE_NAME
 
 
+def running_from_bundle() -> bool:
+    """True when this process is the bundled interpreter itself.
+
+    Such a process must never rebuild the bundle: the rebuild starts by
+    deleting the bundle, which is where its own executable lives.
+    """
+    try:
+        return str(Path(sys.executable)).startswith(str(bundle_path()) + os.sep)
+    except (OSError, ValueError):
+        return False
+
+
 def _interpreter() -> Path:
     """The real interpreter binary, looking through a virtualenv's shim."""
     base = getattr(sys, "_base_executable", None) or sys.executable
@@ -84,6 +96,12 @@ def ensure_bundle(force: bool = False) -> Path:
     interpreter it wraps has actually moved.
     """
     bundle = bundle_path()
+    if running_from_bundle():
+        # The helper is asking for the bundle it is running from. Rebuilding
+        # here would delete this process's own executable mid-flight, and the
+        # copy that follows would then have nothing to copy from.
+        return bundle
+
     executable = bundle / "Contents" / "MacOS" / EXECUTABLE_NAME
     stamp = support_dir() / "bundle-stamp.json"
     interpreter = _interpreter()

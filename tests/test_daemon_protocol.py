@@ -98,3 +98,39 @@ def test_a_stale_socket_left_by_a_dead_daemon_is_cleaned_up(control_socket):
     with pytest.raises(HostAppError, match="not running"):
         daemon.status()
     assert not control_socket.exists()
+
+
+def test_a_process_inside_the_bundle_never_rebuilds_it(tmp_path, monkeypatch):
+    """Regression: rebuilding from inside deletes the caller's own executable.
+
+    The menu bar app runs from the bundle, so clicking Start called
+    ensure_bundle, which saw a stamp mismatch, removed the bundle, and then
+    could not copy the interpreter back — because the interpreter it was told
+    to copy was the one it had just deleted.
+    """
+    from opencaptune import hostapp
+
+    bundle = tmp_path / "OpenCapTune.app"
+    executable = bundle / "Contents" / "MacOS" / "OpenCapTune"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("not really a binary")
+
+    monkeypatch.setattr(hostapp, "bundle_path", lambda: bundle)
+    monkeypatch.setattr(hostapp.sys, "executable", str(executable))
+    assert hostapp.running_from_bundle()
+
+    assert hostapp.ensure_bundle() == bundle
+    assert executable.exists(), "ensure_bundle deleted the running executable"
+
+    # Even asked to force, it must not saw off the branch it is sitting on.
+    assert hostapp.ensure_bundle(force=True) == bundle
+    assert executable.exists()
+
+
+def test_a_process_outside_the_bundle_is_free_to_rebuild(tmp_path, monkeypatch):
+    from opencaptune import hostapp
+
+    bundle = tmp_path / "OpenCapTune.app"
+    monkeypatch.setattr(hostapp, "bundle_path", lambda: bundle)
+    monkeypatch.setattr(hostapp.sys, "executable", "/usr/bin/python3")
+    assert not hostapp.running_from_bundle()

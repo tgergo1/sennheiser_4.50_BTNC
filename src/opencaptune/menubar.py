@@ -150,14 +150,33 @@ class MenuBarController(NSObject):
         self._apply_state()
 
     @objc.python_method
+    def _default_output_name(self):
+        try:
+            import sounddevice
+
+            return sounddevice.query_devices(kind="output")["name"]
+        except Exception:  # noqa: BLE001 - only used to phrase a warning
+            return None
+
+    @objc.python_method
     def _apply_state(self):
         running = self.status is not None
         self.power_item.setTitle_("Stop" if running else "Start")
 
         if not running:
-            self.state_item.setTitle_("Not running")
-            self.routing_item.setTitle_("")
-            self.routing_item.setHidden_(True)
+            # Silence with no explanation is the worst failure this can have:
+            # audio routed into the virtual device with nothing reading it.
+            default_output = self._default_output_name() or ""
+            if "blackhole" in default_output.lower():
+                self.state_item.setTitle_("Not running — no sound")
+                self.routing_item.setHidden_(False)
+                self.routing_item.setTitle_(
+                    f"Output is {default_output}; start the equaliser or change it back"
+                )
+            else:
+                self.state_item.setTitle_("Not running")
+                self.routing_item.setTitle_("")
+                self.routing_item.setHidden_(True)
         else:
             preset = self.status["preset"]
             calibration = self.status.get("calibration")

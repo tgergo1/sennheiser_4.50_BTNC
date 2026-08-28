@@ -1,0 +1,95 @@
+"""GAIA protocol constants.
+
+GAIA ("Generic Application Interface Architecture") is the vendor protocol
+CSR/Qualcomm ship in their Bluetooth audio ADK.  Qualcomm never published a
+specification, but they did release a reference Android implementation under
+their own copyright; the command table below is transcribed from it.
+
+Command IDs are 15 bits.  The top bit distinguishes a request from the
+acknowledgement the device sends back, so an ACK for 0x0300 arrives as 0x8300.
+"""
+
+VENDOR_QUALCOMM = 0x000A
+VENDOR_NONE = 0x7FFE
+
+COMMAND_MASK = 0x7FFF
+ACK_MASK = 0x8000
+
+# --- status codes carried in the first payload byte of an acknowledgement ---
+STATUS_SUCCESS = 0x00
+STATUS_NOT_SUPPORTED = 0x01
+STATUS_NOT_AUTHENTICATED = 0x02
+STATUS_INSUFFICIENT_RESOURCES = 0x03
+STATUS_AUTHENTICATING = 0x04
+STATUS_INVALID_PARAMETER = 0x05
+STATUS_INCORRECT_STATE = 0x06
+STATUS_IN_PROGRESS = 0x07
+
+STATUS_NAMES = {
+    STATUS_SUCCESS: "SUCCESS",
+    STATUS_NOT_SUPPORTED: "NOT_SUPPORTED",
+    STATUS_NOT_AUTHENTICATED: "NOT_AUTHENTICATED",
+    STATUS_INSUFFICIENT_RESOURCES: "INSUFFICIENT_RESOURCES",
+    STATUS_AUTHENTICATING: "AUTHENTICATING",
+    STATUS_INVALID_PARAMETER: "INVALID_PARAMETER",
+    STATUS_INCORRECT_STATE: "INCORRECT_STATE",
+    STATUS_IN_PROGRESS: "IN_PROGRESS",
+}
+
+# --- the subset of the command table this project actually uses ---
+# Configuration (0x01xx); the 0x80 bit within the low byte marks the getter.
+COMMAND_SET_VOICE_PROMPT_CONFIGURATION = 0x0106
+COMMAND_GET_VOICE_PROMPT_CONFIGURATION = 0x0186
+COMMAND_SET_DEVICE_NAME = 0x010F
+COMMAND_GET_DEVICE_NAME = 0x018F
+
+# Control (0x02xx)
+COMMAND_DEVICE_RESET = 0x0202
+COMMAND_SET_POWER_STATE = 0x0204
+COMMAND_GET_POWER_STATE = 0x0284
+COMMAND_SET_AUDIO_PROMPT_LANGUAGE = 0x0212
+COMMAND_GET_AUDIO_PROMPT_LANGUAGE = 0x0292
+COMMAND_SET_EQ_CONTROL = 0x0214
+COMMAND_GET_EQ_CONTROL = 0x0294
+COMMAND_SET_BASS_BOOST_CONTROL = 0x0215
+COMMAND_GET_BASS_BOOST_CONTROL = 0x0295
+COMMAND_SET_3D_ENHANCEMENT_CONTROL = 0x0216
+COMMAND_GET_3D_ENHANCEMENT_CONTROL = 0x0296
+COMMAND_SET_EQ_PARAMETER = 0x021A
+COMMAND_GET_EQ_PARAMETER = 0x029A
+COMMAND_SET_EQ_GROUP_PARAMETER = 0x021B
+COMMAND_GET_EQ_GROUP_PARAMETER = 0x029B
+COMMAND_ENTER_BLUETOOTH_PAIRING_MODE = 0x021D
+COMMAND_SET_USER_EQ_CONTROL = 0x0220
+COMMAND_GET_USER_EQ_CONTROL = 0x02A0
+
+# Polled status (0x03xx)
+COMMAND_GET_API_VERSION = 0x0300
+COMMAND_GET_CURRENT_RSSI = 0x0301
+COMMAND_GET_CURRENT_BATTERY_LEVEL = 0x0302
+COMMAND_GET_MODULE_ID = 0x0303
+COMMAND_GET_APPLICATION_VERSION = 0x0304
+
+# Firmware upgrade (0x06xx)
+COMMAND_VM_UPGRADE_CONNECT = 0x0640
+COMMAND_VM_UPGRADE_DISCONNECT = 0x0641
+COMMAND_VM_UPGRADE_CONTROL = 0x0642
+
+# Notifications (0x40xx)
+COMMAND_REGISTER_NOTIFICATION = 0x4001
+COMMAND_GET_NOTIFICATION = 0x4081
+COMMAND_CANCEL_NOTIFICATION = 0x4002
+COMMAND_EVENT_NOTIFICATION = 0x4003
+
+COMMAND_NAMES = {
+    value: name
+    for name, value in list(globals().items())
+    if name.startswith("COMMAND_") and name != "COMMAND_MASK" and isinstance(value, int)
+}
+
+
+def command_name(command_id: int) -> str:
+    """Human-readable name for a command ID, marking acknowledgements."""
+    base = command_id & COMMAND_MASK
+    name = COMMAND_NAMES.get(base, f"UNKNOWN_0x{base:04X}")
+    return f"{name} (ACK)" if command_id & ACK_MASK else name

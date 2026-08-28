@@ -30,9 +30,15 @@ from pathlib import Path
 BUNDLE_NAME = "OpenCapTune.app"
 BUNDLE_ID = "org.opencaptune.host"
 EXECUTABLE_NAME = "OpenCapTune"
-USAGE_DESCRIPTION = (
+BLUETOOTH_USAGE = (
     "OpenCapTune talks to your Sennheiser headphones over Bluetooth to read "
     "their capabilities and settings."
+)
+# Reading from a virtual output device such as BlackHole counts as microphone
+# input as far as macOS is concerned, so the equaliser needs this too.
+MICROPHONE_USAGE = (
+    "OpenCapTune reads the audio you are playing so it can equalise it before "
+    "it reaches your headphones."
 )
 
 
@@ -63,8 +69,9 @@ def _info_plist() -> dict:
         "CFBundleShortVersionString": "0.1.0",
         # No dock icon: this bundle exists only to own a TCC identity.
         "LSBackgroundOnly": True,
-        "NSBluetoothAlwaysUsageDescription": USAGE_DESCRIPTION,
-        "NSBluetoothPeripheralUsageDescription": USAGE_DESCRIPTION,
+        "NSBluetoothAlwaysUsageDescription": BLUETOOTH_USAGE,
+        "NSBluetoothPeripheralUsageDescription": BLUETOOTH_USAGE,
+        "NSMicrophoneUsageDescription": MICROPHONE_USAGE,
     }
 
 
@@ -107,6 +114,35 @@ def ensure_bundle(force: bool = False) -> Path:
     return bundle
 
 
+def _launch_arguments(module: str, arguments: list[str]) -> list[str]:
+    # The interpreter runs outside its own prefix, so point it at its standard
+    # library and at wherever this package was imported from.
+    return [
+        "--env",
+        f"PYTHONHOME={sys.base_prefix}",
+        "--env",
+        f"PYTHONPATH={os.pathsep.join(p for p in sys.path if p)}",
+        "--args",
+        "-m",
+        module,
+        *arguments,
+    ]
+
+
+def launch_detached(module: str, arguments: list[str]) -> None:
+    """Start a long-running helper inside the bundle and return immediately."""
+    if sys.platform != "darwin":
+        raise HostAppError("the helper bundle is a macOS-only mechanism")
+    bundle = ensure_bundle()
+    result = subprocess.run(
+        ["open", "-n", str(bundle), *_launch_arguments(module, arguments)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise HostAppError(f"could not launch the helper: {result.stderr.strip()}")
+
+
 def run_helper(request: dict, timeout: float = 120.0) -> dict:
     """Execute one request inside the bundle and return its response."""
     if sys.platform != "darwin":
@@ -119,25 +155,12 @@ def run_helper(request: dict, timeout: float = 120.0) -> dict:
         response_file = workdir / "response.json"
         request_file.write_text(json.dumps(request))
 
-        # The interpreter is running outside its own prefix, so it needs to be
-        # told where its standard library and our package live.
-        env_args = [
-            "--env",
-            f"PYTHONHOME={sys.base_prefix}",
-            "--env",
-            f"PYTHONPATH={os.pathsep.join(p for p in sys.path if p)}",
-        ]
         command = [
             "open",
             "-W",
             "-n",
             str(bundle),
-            *env_args,
-            "--args",
-            "-m",
-            "opencaptune._helper",
-            str(request_file),
-            str(response_file),
+            *_launch_arguments("opencaptune._helper", [str(request_file), str(response_file)]),
         ]
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
         if not response_file.exists():

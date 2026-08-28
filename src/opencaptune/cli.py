@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 
+from . import daemon
 from . import eq as equaliser
 from .bluetooth import uuids as uuid_table
 from .hostapp import HostAppError, ensure_bundle, run_helper
@@ -103,7 +104,7 @@ def _export(preset, style: str, sample_rate: int) -> str:
         )
     if style == "apo":
         # EqualizerAPO / AutoEQ parametric format, also read by many players.
-        lines = ["Preamp: -6.0 dB"]
+        lines = [f"Preamp: {equaliser.preamp_db(preset):.1f} dB"]
         q = equaliser.default_q()
         for index, (frequency, gain) in enumerate(zip(equaliser.bands(), preset.gains_db), 1):
             lines.append(
@@ -118,6 +119,16 @@ def _export(preset, style: str, sample_rate: int) -> str:
             lines.append(f"{b0:.10f} {b1:.10f} {b2:.10f} {a1:.10f} {a2:.10f}")
         return "\n".join(lines)
     raise ValueError(f"unknown format {style!r}")
+
+
+def _print_status(report: dict) -> None:
+    print(f"  preset      {report['preset']}  (preamp {report['preamp_db']:+.1f} dB)")
+    print(f"  routing     {report['input']} -> {report['output']}")
+    print(f"  format      {report['sample_rate']} Hz, {report['channels']} ch, "
+          f"{report['block_size']} frame blocks (~{report['latency_ms']} ms)")
+    hours = report["frames"] / report["sample_rate"] / 3600
+    print(f"  processed   {report['frames']} frames ({hours:.2f} h), "
+          f"{report['glitches']} glitches, peak {report['peak']:.3f}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,9 +157,33 @@ def main(argv: list[str] | None = None) -> int:
 
     subcommands.add_parser("bundle", help="rebuild the macOS Bluetooth helper bundle")
 
+    audio_parser = subcommands.add_parser("audio", help="audio device inspection")
+    audio_commands = audio_parser.add_subparsers(dest="audio_command", required=True)
+    audio_commands.add_parser("devices", help="list CoreAudio devices")
+
     eq_parser = subcommands.add_parser("eq", help="CapTune's equaliser presets")
     eq_commands = eq_parser.add_subparsers(dest="eq_command", required=True)
     eq_commands.add_parser("list", help="list the presets CapTune shipped")
+
+    start = eq_commands.add_parser("start", help="start the always-on equaliser")
+    start.add_argument("--input", default="BlackHole",
+                       help="device to read from, normally a virtual output device")
+    start.add_argument("--output", required=True, help="device to play to, e.g. your headphones")
+    start.add_argument("--preset", default="Neutral", help="preset to start with")
+    start.add_argument("--bass", type=int, default=0, metavar="0-100")
+    start.add_argument("--treble", type=int, default=0, metavar="0-100")
+    start.add_argument("--block-size", type=int, default=512,
+                       help="frames per block; lower is less latency, more risk of glitches")
+    start.add_argument("--sample-rate", type=int, default=None,
+                       help="defaults to the output device's own rate")
+
+    eq_commands.add_parser("stop", help="stop the equaliser")
+    eq_commands.add_parser("status", help="show what the equaliser is doing")
+
+    live = eq_commands.add_parser("set", help="change preset while running")
+    live.add_argument("preset")
+    live.add_argument("--bass", type=int, default=0, metavar="0-100")
+    live.add_argument("--treble", type=int, default=0, metavar="0-100")
 
     for name, help_text in (("show", "display a preset"), ("export", "write a preset out")):
         command = eq_commands.add_parser(name, help=help_text)
@@ -166,7 +201,58 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
 
     try:
+        if arguments.command == "audio":
+            from .audio.devices import devices as audio_devices
+
+            for device in audio_devices():
+                capability = []
+                if device.is_input:
+                    capability.append(f"in {device.input_channels}")
+                if device.is_output:
+                    capability.append(f"out {device.output_channels}")
+                print(
+                    f"  {device.index:>3}  {device.name:<30} {', '.join(capability):<12} "
+                    f"{device.default_sample_rate:>6.0f} Hz"
+                )
+            return 0
+
         if arguments.command == "eq":
+            if arguments.eq_command == "start":
+                from .audio.engine import EngineConfig
+
+                report = daemon.start(
+                    EngineConfig(
+                        input_device=arguments.input,
+                        output_device=arguments.output,
+                        preset=arguments.preset,
+                        bass=arguments.bass,
+                        treble=arguments.treble,
+                        sample_rate=arguments.sample_rate,
+                        block_size=arguments.block_size,
+                    )
+                )
+                print("Equaliser running.")
+                _print_status(report)
+                return 0
+
+            if arguments.eq_command == "stop":
+                daemon.stop()
+                print("Equaliser stopped.")
+                return 0
+
+            if arguments.eq_command == "status":
+                if not daemon.is_running():
+                    print("Equaliser is not running.")
+                    return 1
+                print("Equaliser running.")
+                _print_status(daemon.status())
+                return 0
+
+            if arguments.eq_command == "set":
+                report = daemon.set_preset(arguments.preset, arguments.bass, arguments.treble)
+                print(f"Preset is now {report['preset']} (preamp {report['preamp_db']:+.1f} dB).")
+                return 0
+
             if arguments.eq_command == "list":
                 for preset in equaliser.presets().values():
                     span = f"{min(preset.gains_db):+.1f} to {max(preset.gains_db):+.1f} dB"
@@ -210,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             _print_survey(result, arguments.verbose)
         return 0
-    except (HostAppError, NotImplementedError, KeyError, ValueError) as error:
+    except (HostAppError, NotImplementedError, KeyError, ValueError, LookupError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

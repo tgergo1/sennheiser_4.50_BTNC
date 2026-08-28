@@ -131,6 +131,39 @@ def peaking_coefficients(
     return (b0 / a0, b1 / a0, b2 / a0), (1.0, a1 / a0, a2 / a0)
 
 
+def response_db(
+    values: Preset, frequency: float, sample_rate: int = 48000, q: float | None = None
+) -> float:
+    """Magnitude response of the whole cascade at one frequency, in dB."""
+    omega = 2.0 * math.pi * frequency / sample_rate
+    z = complex(math.cos(omega), math.sin(omega))
+    total = complex(1.0, 0.0)
+    for (b0, b1, b2), (_, a1, a2) in filter_chain(values, sample_rate, q):
+        total *= (b0 + b1 / z + b2 / z**2) / (1.0 + a1 / z + a2 / z**2)
+    return 20.0 * math.log10(abs(total)) if abs(total) > 0 else -math.inf
+
+
+def preamp_db(
+    values: Preset, sample_rate: int = 48000, q: float | None = None, points: int = 1024
+) -> float:
+    """Attenuation that stops a boosted curve clipping a full-scale signal.
+
+    Not simply the largest band gain: neighbouring peaking sections overlap, so
+    two adjacent boosts sum to more than either alone. This measures the actual
+    peak of the cascade across the spectrum instead.
+    """
+    chain = filter_chain(values, sample_rate, q)
+    if not chain:
+        return 0.0
+    lowest, highest = 10.0, min(sample_rate / 2.0 * 0.999, 22000.0)
+    step = (math.log10(highest) - math.log10(lowest)) / (points - 1)
+    peak = max(
+        response_db(values, 10.0 ** (math.log10(lowest) + step * index), sample_rate, q)
+        for index in range(points)
+    )
+    return -max(0.0, peak)
+
+
 def filter_chain(
     values: Preset, sample_rate: int, q: float | None = None
 ) -> list[tuple[tuple[float, float, float], tuple[float, float, float]]]:

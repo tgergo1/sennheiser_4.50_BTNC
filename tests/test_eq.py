@@ -94,3 +94,18 @@ def test_the_chain_drops_bands_above_nyquist_and_flat_bands():
 def test_peaking_rejects_a_centre_frequency_above_nyquist():
     with pytest.raises(ValueError, match="Nyquist"):
         eq.peaking_coefficients(17605, 3.0, 32000)
+
+
+def test_response_db_agrees_with_an_independent_evaluation():
+    preset = eq.preset("Classical")
+    sections = eq.filter_chain(preset, 48000)
+    for frequency in (50, 500, 5000):
+        assert eq.response_db(preset, frequency, 48000) == pytest.approx(
+            _response_db(sections, frequency, 48000), abs=1e-9
+        )
+
+
+def test_preamp_never_boosts_and_is_zero_for_a_flat_curve():
+    assert eq.preamp_db(eq.preset("Neutral")) == 0.0
+    for preset in eq.presets().values():
+        assert eq.preamp_db(preset) <= 0.0

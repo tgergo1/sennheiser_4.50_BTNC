@@ -38,8 +38,18 @@ $ captune eq show Rock
 ## Install
 
 ```
-uv venv && uv pip install -e ".[macos]"
+uv tool install --editable ".[macos]"
 ```
+
+This puts `captune` on your `PATH`, so it works from any directory. `--editable`
+points the installed tool at this checkout, so edits here take effect
+immediately — but moving or deleting the checkout breaks the command. Drop
+`--editable` for a standalone copy, and `uv tool uninstall opencaptune` to
+remove it.
+
+To work on the code instead, `uv venv && uv pip install -e ".[macos]"` — but
+note that this leaves `captune` inside `.venv/bin`, reachable only after
+`source .venv/bin/activate`.
 
 Python 3.10+, macOS. The equaliser itself is portable; the Bluetooth survey and
 the permission plumbing are macOS-specific.

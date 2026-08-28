@@ -142,6 +142,23 @@ captune eq start --input "BlackHole 2ch" --output "YourHeadphones" \
   --preset Neutral --calibration "HD 4.50 BTNC"
 ```
 
+### Any other headphones
+
+The same machinery works for anything you own. AutoEq collects measurements
+from two dozen independent measurers covering thousands of models:
+
+```
+captune eq fetch "HD 650"              # search, download, save
+captune eq fetch "K371" --list         # just show what matches
+captune eq import curve.txt --name "…" # a local AutoEq/EqualizerAPO file
+captune eq forget "…"                  # remove an imported one
+```
+
+Imported corrections sit alongside the shipped one and appear in the menu bar
+without a restart.
+
+### About the shipped profile
+
 It is not a subtle correction — −7.2 dB at 2 kHz and +8.2 dB at 3.9 kHz — and
 it is the single biggest improvement available to these headphones. Presets
 stack on top of it: the calibration fixes the headphones, the preset is taste.

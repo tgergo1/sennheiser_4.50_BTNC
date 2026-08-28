@@ -190,6 +190,25 @@ def main(argv: list[str] | None = None) -> int:
     eq_commands.add_parser("list", help="list the presets CapTune shipped")
     eq_commands.add_parser("calibrations", help="list measured headphone corrections")
 
+    fetch = eq_commands.add_parser(
+        "fetch", help="download a headphone correction from the AutoEq database"
+    )
+    fetch.add_argument("model", help='headphone model, e.g. "HD 650"')
+    fetch.add_argument("--source", default=None,
+                       help="restrict to one measurer, e.g. oratory1990")
+    fetch.add_argument("--name", default=None, help="save it under a different name")
+    fetch.add_argument("--list", action="store_true",
+                       help="only show what matches, without saving")
+
+    import_parser = eq_commands.add_parser(
+        "import", help="import a correction from an AutoEq/EqualizerAPO text file"
+    )
+    import_parser.add_argument("file")
+    import_parser.add_argument("--name", required=True, help="what to call it")
+
+    forget = eq_commands.add_parser("forget", help="delete an imported correction")
+    forget.add_argument("name")
+
     crossfeed_parser = eq_commands.add_parser(
         "crossfeed", help="set the crossfeed strength while running"
     )
@@ -325,6 +344,52 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"    {entry.description}")
                 return 0
 
+            if arguments.eq_command == "fetch":
+                from .eq import autoeq
+
+                sources = (arguments.source,) if arguments.source else autoeq.DEFAULT_SOURCES
+                matches = autoeq.search(arguments.model, sources)
+                if not matches:
+                    print(f"Nothing in AutoEq matches {arguments.model!r}.")
+                    print(f"Searched: {', '.join(sources)}. Try --source to widen it.")
+                    return 1
+                for source, category, model in matches:
+                    print(f"  {model}  ({source}, {category})")
+                if arguments.list:
+                    return 0
+                chosen = matches[0]
+                if len(matches) > 1:
+                    print(f"\nTaking the closest match: {chosen[2]} ({chosen[0]})")
+                correction = autoeq.fetch(*chosen)
+                if arguments.name:
+                    correction = equaliser.Calibration(
+                        name=arguments.name, filters=correction.filters,
+                        source=correction.source)
+                equaliser.save_calibration(correction)
+                print(f"\nSaved {correction.name!r} — {len(correction.filters)} filters, "
+                      f"preamp {equaliser.preamp_db(correction):.1f} dB")
+                print(f'Use it with: captune eq calibrate "{correction.name}"')
+                return 0
+
+            if arguments.eq_command == "import":
+                from pathlib import Path
+
+                text = Path(arguments.file).read_text()
+                correction = equaliser.parse_parametric(
+                    text, name=arguments.name, source=f"imported from {arguments.file}")
+                equaliser.save_calibration(correction)
+                print(f"Imported {correction.name!r} — {len(correction.filters)} filters, "
+                      f"preamp {equaliser.preamp_db(correction):.1f} dB")
+                return 0
+
+            if arguments.eq_command == "forget":
+                if equaliser.delete_calibration(arguments.name):
+                    print(f"Removed {arguments.name!r}.")
+                    return 0
+                print(f"No imported correction called {arguments.name!r}. "
+                      "Corrections shipped with the app cannot be removed.")
+                return 1
+
             if arguments.eq_command == "crossfeed":
                 report = daemon.set_crossfeed(arguments.strength)
                 print(f"Crossfeed is now {report['crossfeed']}%.")
@@ -396,7 +461,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             _print_survey(result, arguments.verbose)
         return 0
-    except (HostAppError, NotImplementedError, KeyError, ValueError, LookupError) as error:
+    except (HostAppError, NotImplementedError, KeyError, ValueError, LookupError,
+            OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

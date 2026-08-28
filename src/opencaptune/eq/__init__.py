@@ -16,6 +16,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from functools import lru_cache
 from importlib import resources
 
@@ -349,21 +350,77 @@ def parse_parametric(text: str, name: str, source: str = "") -> Calibration:
     return Calibration(name=name, filters=tuple(filters), source=source)
 
 
-@lru_cache(maxsize=1)
+def _decode(entry: dict) -> Calibration:
+    return Calibration(
+        name=entry["name"],
+        source=entry.get("source", ""),
+        filters=tuple(
+            Filter(f["kind"], f["frequency"], f["gain_db"], f["q"]) for f in entry["filters"]
+        ),
+    )
+
+
+def _encode(value: Calibration) -> dict:
+    return {
+        "name": value.name,
+        "source": value.source,
+        "filters": [
+            {"kind": f.kind, "frequency": f.frequency, "gain_db": f.gain_db, "q": f.q}
+            for f in value.filters
+        ],
+    }
+
+
+def user_calibrations_path() -> Path:
+    """Where imported curves live, alongside the rest of the app's state."""
+    return Path.home() / "Library" / "Application Support" / "OpenCapTune" / "calibrations.json"
+
+
 def calibrations() -> dict[str, Calibration]:
-    """Measured correction curves shipped with the package."""
+    """Correction curves: the ones shipped, plus any the user imported."""
     text = resources.files(__package__).joinpath("calibrations.json").read_text()
-    loaded = {}
-    for entry in json.loads(text)["calibrations"]:
-        loaded[entry["name"]] = Calibration(
-            name=entry["name"],
-            source=entry.get("source", ""),
-            filters=tuple(
-                Filter(f["kind"], f["frequency"], f["gain_db"], f["q"])
-                for f in entry["filters"]
-            ),
-        )
+    loaded = {entry["name"]: _decode(entry) for entry in json.loads(text)["calibrations"]}
+
+    path = user_calibrations_path()
+    if path.exists():
+        try:
+            for entry in json.loads(path.read_text())["calibrations"]:
+                loaded[entry["name"]] = _decode(entry)
+        except (json.JSONDecodeError, KeyError, OSError, ValueError, TypeError):
+            # A corrupt user file must not take the shipped ones down with it.
+            pass
     return loaded
+
+
+def _read_user_entries() -> list[dict]:
+    path = user_calibrations_path()
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text())["calibrations"]
+    except (json.JSONDecodeError, KeyError, OSError, TypeError):
+        return []
+
+
+def save_calibration(value: Calibration) -> None:
+    """Add or replace a user calibration on disk."""
+    path = user_calibrations_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entries = [e for e in _read_user_entries() if e.get("name") != value.name]
+    entries.append(_encode(value))
+    path.write_text(json.dumps({"calibrations": entries}, indent=2))
+
+
+def delete_calibration(name: str) -> bool:
+    """Remove a user calibration. Shipped ones cannot be removed."""
+    entries = _read_user_entries()
+    remaining = [e for e in entries if (e.get("name") or "").lower() != name.lower()]
+    if len(remaining) == len(entries):
+        return False
+    user_calibrations_path().write_text(
+        json.dumps({"calibrations": remaining}, indent=2)
+    )
+    return True
 
 
 def calibration(name: str) -> Calibration:

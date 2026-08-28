@@ -127,10 +127,6 @@ class MenuBarController(NSObject):
         for index, preset in enumerate(equaliser.presets()):
             self._add(self.preset_menu, preset, "choosePreset:", tag=index)
 
-        self._add(self.calibration_menu, "Off", "chooseCalibration:", tag=-1)
-        for index, name in enumerate(equaliser.calibrations()):
-            self._add(self.calibration_menu, name, "chooseCalibration:", tag=index)
-
         for index, value in enumerate(CROSSFEED_STEPS):
             title = "Off" if value == 0 else f"{value}%"
             self._add(self.crossfeed_menu, title, "chooseCrossfeed:", tag=index)
@@ -191,7 +187,12 @@ class MenuBarController(NSObject):
         self._tick(self.preset_menu, list(equaliser.presets()).index(self.status["preset"])
                    if running and self.status["preset"] in equaliser.presets() else None)
 
+        # Rebuilt every refresh so imported corrections appear without a restart.
         names = list(equaliser.calibrations())
+        self.calibration_menu.removeAllItems()
+        self._add(self.calibration_menu, "Off", "chooseCalibration:", tag=-1)
+        for index, name in enumerate(names):
+            self._add(self.calibration_menu, name, "chooseCalibration:", tag=index)
         current = self.status.get("calibration") if running else None
         self._tick(self.calibration_menu,
                    0 if current is None else names.index(current) + 1 if current in names else None,

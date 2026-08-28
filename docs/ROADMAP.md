@@ -25,7 +25,7 @@ This is the single largest sound improvement available. The correction is not
 subtle: −7.2 dB at 2 kHz and +8.2 dB at 3.9 kHz. Presets stack on top —
 calibration fixes the headphones, the preset is taste.
 
-### 2. Rebuild SoundCheck — *high confidence, moderate effort*
+### 2. Rebuild SoundCheck — **done**
 
 CapTune's best feature: a blind A/B wizard that converged on a personal curve
 by asking which of two renderings you preferred. Nothing about it needed the
@@ -84,7 +84,7 @@ contours). CapTune's "Loudness" preset is a fixed approximation of this. A
 correct version tracks the actual playback level and interpolates between
 contours, so it stops applying the boost as you turn it up.
 
-### 6. Battery and status — *trivial*
+### 6. Battery and status — *trivial, not done*
 
 macOS already knows the charge level over HFP; `captune devices` could surface
 it, along with connection state and the negotiated codec.

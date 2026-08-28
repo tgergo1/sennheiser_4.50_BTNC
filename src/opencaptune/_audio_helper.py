@@ -56,6 +56,15 @@ def _serve(engine: Engine, socket_path: Path, log: Path) -> None:
                             treble=request.get("treble", 0),
                         )
                         response = {"ok": True, **engine.status()}
+                    elif action == "set_curve":
+                        engine.set_curve(request["gains"])
+                        response = {"ok": True, **engine.status()}
+                    elif action == "watch_spectrum":
+                        engine.watch_spectrum(request.get("enabled", True))
+                        response = {"ok": True}
+                    elif action == "spectrum":
+                        response = {"ok": True, "spectrum": engine.spectrum(),
+                                    "gains": [round(g, 2) for g in engine.preset.gains_db]}
                     elif action == "set_crossfeed":
                         engine.set_crossfeed(int(request["crossfeed"]))
                         response = {"ok": True, **engine.status()}

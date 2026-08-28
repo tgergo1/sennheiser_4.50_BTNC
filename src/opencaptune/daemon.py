@@ -74,6 +74,18 @@ def set_preset(name: str, bass: int = 0, treble: int = 0) -> dict:
     return _request({"action": "set_preset", "preset": name, "bass": bass, "treble": treble})
 
 
+def set_curve(gains) -> dict:
+    return _request({"action": "set_curve", "gains": list(gains)})
+
+
+def watch_spectrum(enabled: bool = True) -> dict:
+    return _request({"action": "watch_spectrum", "enabled": enabled})
+
+
+def spectrum() -> dict:
+    return _request({"action": "spectrum"}, timeout=2.0)
+
+
 def set_crossfeed(strength: int) -> dict:
     return _request({"action": "set_crossfeed", "crossfeed": strength})
 

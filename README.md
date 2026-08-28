@@ -61,12 +61,54 @@ captune ui
 ```
 
 A sliders icon appears in the menu bar. From it you can start and stop the
-equaliser, pick the output device, and switch preset, calibration, crossfeed
-and loudness while music is playing.
+equaliser, pick the output device, switch preset, calibration, crossfeed and
+loudness while music is playing, apply saved profiles, and open the two
+windows below.
 
 It holds no state of its own — everything it shows is read back from the
 daemon every two seconds, so the menu and the audio can never disagree, and
 the CLI and the menu can be used interchangeably.
+
+### Profiles
+
+A profile is a whole setup under one name — preset, calibration, crossfeed,
+loudness and the output device it belongs to. Settings that suit headphones
+are wrong for speakers, and the device is what tells them apart.
+
+```
+captune profile save "Music"      # captures what is running right now
+captune profile apply "Music"
+captune profile list
+```
+
+**Profiles → Save current as…** does the same from the menu bar.
+
+**Follow device** in the menu makes the equaliser start when that profile's
+output device appears and stop when it goes away, so plugging in the
+headphones is the only thing you have to do.
+
+```
+captune autostart enable          # and start the menu bar app at login
+```
+
+### The equaliser window
+
+**Equaliser window…** opens a live view: the fourteen bands as a curve you
+drag directly, drawn over a running spectrum of whatever is playing. Dragging a
+handle changes the sound immediately.
+
+### Sound Check
+
+CapTune's best feature, rebuilt. **Sound Check…** runs twelve blind
+comparisons — bass, lower mid, upper mid, treble, three passes each with the
+step halving every pass — and converges on the curve you actually prefer.
+
+Both options in every pair are **matched for loudness**: the average level is
+removed from each, so a comparison is about tone. Without that the louder
+option wins almost every time regardless of how it sounds, which is the
+classic way listening tests lie to you.
+
+Save the result with **Profiles → Save current as…**.
 
 ## System-wide equaliser
 
@@ -237,6 +279,8 @@ available.
 | `captune eq set NAME` / `stop` / `status` | control it while it runs |
 | `captune eq status --reset` | show it, then clear the counters |
 | `captune ui` | open the menu bar app |
+| `captune profile list\|save\|apply\|delete NAME` | named setups |
+| `captune autostart enable\|disable\|status` | start the app at login |
 | `captune audio devices` | list CoreAudio devices |
 | `captune devices` | list paired Bluetooth devices |
 | `captune survey ADDR` | report a headphone's control channel, if any |

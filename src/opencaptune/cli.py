@@ -8,6 +8,8 @@ import sys
 
 from . import daemon
 from . import eq as equaliser
+from . import profiles as profile_store
+from . import settings as app_settings
 from .bluetooth import uuids as uuid_table
 from .hostapp import HostAppError, ensure_bundle, launch_detached, run_helper
 from .survey import survey
@@ -180,6 +182,22 @@ def main(argv: list[str] | None = None) -> int:
 
     subcommands.add_parser("bundle", help="rebuild the macOS Bluetooth helper bundle")
     subcommands.add_parser("ui", help="open the menu bar app")
+
+    profile_parser = subcommands.add_parser("profile", help="named setups")
+    profile_commands = profile_parser.add_subparsers(dest="profile_command", required=True)
+    profile_commands.add_parser("list", help="list saved profiles")
+    for name, help_text in (("save", "save what is running now"),
+                            ("apply", "start or reconfigure to a profile"),
+                            ("show", "describe a profile"),
+                            ("delete", "remove a profile")):
+        command = profile_commands.add_parser(name, help=help_text)
+        command.add_argument("name")
+
+    auto = subcommands.add_parser("autostart", help="start the menu bar app at login")
+    auto_commands = auto.add_subparsers(dest="autostart_command", required=True)
+    auto_commands.add_parser("enable")
+    auto_commands.add_parser("disable")
+    auto_commands.add_parser("status")
 
     audio_parser = subcommands.add_parser("audio", help="audio device inspection")
     audio_commands = audio_parser.add_subparsers(dest="audio_command", required=True)
@@ -431,6 +449,65 @@ def main(argv: list[str] | None = None) -> int:
             _print_devices(run_helper({"action": "list_devices"})["devices"])
             return 0
 
+        if arguments.command == "profile":
+            if arguments.profile_command == "list":
+                saved = profile_store.profiles()
+                if not saved:
+                    print("No profiles saved. Run `captune profile save NAME` "
+                          "while the equaliser is running.")
+                    return 0
+                auto = app_settings.get("auto_profile")
+                for entry in saved.values():
+                    marker = " (auto)" if entry.name == auto else ""
+                    print(f"  {entry.name}{marker}")
+                    print(f"    {entry.summary()}")
+                    if entry.output_device:
+                        print(f"    -> {entry.output_device}")
+                return 0
+
+            if arguments.profile_command == "save":
+                if not daemon.is_running():
+                    print("error: start the equaliser first, so there is something to save",
+                          file=sys.stderr)
+                    return 1
+                entry = profile_store.from_status(arguments.name, daemon.status())
+                profile_store.save(entry)
+                print(f"Saved {entry.name!r}: {entry.summary()}")
+                return 0
+
+            if arguments.profile_command == "show":
+                entry = profile_store.profile(arguments.name)
+                print(f"{entry.name}\n  {entry.summary()}")
+                print(f"  {entry.input_device} -> {entry.output_device or '(none set)'}")
+                return 0
+
+            if arguments.profile_command == "delete":
+                if profile_store.delete(arguments.name):
+                    print(f"Removed {arguments.name!r}.")
+                    return 0
+                print(f"No profile called {arguments.name!r}.", file=sys.stderr)
+                return 1
+
+            entry = profile_store.profile(arguments.name)
+            if daemon.is_running():
+                daemon.stop()
+            report = daemon.start(profile_store.to_config(entry))
+            print(f"Applied {entry.name!r}.")
+            _print_status(report)
+            return 0
+
+        if arguments.command == "autostart":
+            from . import autostart
+
+            if arguments.autostart_command == "enable":
+                print(f"Enabled. The menu bar app will start at login.\n  {autostart.enable()}")
+                return 0
+            if arguments.autostart_command == "disable":
+                print("Disabled." if autostart.disable() else "It was not enabled.")
+                return 0
+            print("Starts at login." if autostart.is_enabled() else "Does not start at login.")
+            return 0
+
         if arguments.command == "ui":
             launch_detached("opencaptune.menubar", [])
             print("Menu bar app started — look for the slider icon in the menu bar.")
@@ -462,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_survey(result, arguments.verbose)
         return 0
     except (HostAppError, NotImplementedError, KeyError, ValueError, LookupError,
-            OSError) as error:
+            OSError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

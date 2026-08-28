@@ -10,6 +10,8 @@ from __future__ import annotations
 import threading
 from dataclasses import asdict, dataclass, field
 
+import numpy as np
+
 from .. import eq
 from ..eq import loudness as loudness_module
 from .crossfeed import Crossfeed
@@ -55,6 +57,10 @@ class Engine:
         self._stream = None
         self._lock = threading.Lock()
         self._restore_volume: tuple[int, float] | None = None
+        self._spectrum = np.full(len(eq.bands()), -90.0)
+        self._bins = None
+        # Only measured while something is displaying it.
+        self._watching_spectrum = False
 
         self.input = resolve(config.input_device, "input")
         self.output = resolve(config.output_device, "output")
@@ -83,6 +89,8 @@ class Engine:
 
     @staticmethod
     def _preset_from(name: str, bass: int, treble: int) -> eq.Preset:
+        if name == "Custom":
+            return eq.Preset("Custom", tuple(0.0 for _ in eq.bands()))
         return eq.preset(name).with_boosts(bass=bass, treble=treble)
 
     @staticmethod
@@ -97,6 +105,24 @@ class Engine:
         with self._lock:
             self._equaliser.set_loudness(filters)
         self.config.loudness_phon = phon
+
+    def set_curve(self, gains) -> None:
+        """Apply an arbitrary 14-band curve, for the editor and Sound Check."""
+        bands = eq.bands()
+        if len(gains) != len(bands):
+            raise ValueError(f"expected {len(bands)} gains, got {len(gains)}")
+        clamped = tuple(
+            min(eq.MAX_GAIN_DB, max(eq.MIN_GAIN_DB, float(g))) for g in gains
+        )
+        with self._lock:
+            self._equaliser.set_preset(eq.Preset("Custom", clamped))
+        self.config.preset = "Custom"
+
+    def watch_spectrum(self, enabled: bool) -> None:
+        self._watching_spectrum = bool(enabled)
+
+    def spectrum(self) -> list[float]:
+        return [round(float(v), 1) for v in self._spectrum]
 
     def set_crossfeed(self, strength: int) -> None:
         """Change the crossfeed strength while streaming."""
@@ -130,11 +156,47 @@ class Engine:
             self._equaliser.set_preset(replacement)
         self.config.preset, self.config.bass, self.config.treble = name, bass, treble
 
+    def _band_bins(self, frames: int):
+        """Which FFT bins belong to each equaliser band.
+
+        Cached per block size: the mapping only changes if the block does.
+        """
+        if self._bins is not None and self._bins[0] == frames:
+            return self._bins[1]
+        frequencies = np.fft.rfftfreq(frames, 1.0 / self.sample_rate)
+        centres = np.array(eq.bands(), dtype=float)
+        # Split between neighbours geometrically, which is how the bands are spaced.
+        edges = np.concatenate(
+            [[centres[0] / 1.3], np.sqrt(centres[:-1] * centres[1:]), [centres[-1] * 1.3]]
+        )
+        groups = [
+            np.where((frequencies >= low) & (frequencies < high))[0]
+            for low, high in zip(edges, edges[1:])
+        ]
+        self._bins = (frames, groups)
+        return groups
+
+    def _measure_spectrum(self, block) -> None:
+        mono = block.mean(axis=1)
+        spectrum = np.abs(np.fft.rfft(mono * np.hanning(len(mono)))) / (len(mono) / 2)
+        levels = []
+        for group in self._band_bins(len(mono)):
+            energy = float(np.sqrt(np.mean(spectrum[group] ** 2))) if len(group) else 0.0
+            levels.append(20.0 * np.log10(energy + 1e-9))
+        measured = np.array(levels)
+        # Fast attack, slow release, so the display is readable rather than jittery.
+        rising = measured > self._spectrum
+        self._spectrum = np.where(
+            rising, measured, self._spectrum * 0.8 + measured * 0.2
+        )
+
     def _callback(self, indata, outdata, frames, time_info, status) -> None:
         if status:
             self.stats.glitches += 1
         with self._lock:
             filtered = self._equaliser.process(self._crossfeed.process(indata))
+            if self._watching_spectrum and frames:
+                self._measure_spectrum(filtered)
         outdata[:] = filtered
         self.stats.frames += frames
         peak = float(abs(filtered).max()) if frames else 0.0
@@ -213,6 +275,7 @@ class Engine:
                 round(self._restore_volume[1], 3) if self._restore_volume else None
             ),
             "preamp_db": round(self._equaliser.preamp_db, 2),
+            "gains": [round(g, 2) for g in self.preset.gains_db],
             "latency_ms": round(self.config.block_size / self.sample_rate * 1000, 1),
             "frames": self.stats.frames,
             "glitches": self.stats.glitches,

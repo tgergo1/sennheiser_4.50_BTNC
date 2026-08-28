@@ -75,3 +75,87 @@ rfcomm connect /dev/rfcomm0 00:16:94:41:89:D8 <channel>
 The absence of *any* vendor service in SDP already makes a hidden channel
 unlikely: a device that hides its control channel still has to tell its own
 companion app where to find it.
+
+---
+
+# What CapTune actually did — from the app itself
+
+Settled by static analysis of CapTune 1.8.1 (`com.sennheiser.captune`, build
+722). The APK is signed by `C=DE, L=Wedemark, O=Sennheiser electronic GmbH &
+Co. KG, OU=Consumer Division`, a certificate issued 2014-03-27; a repackaged
+build would carry a different signing key. It was decompiled and read, never
+executed.
+
+## The app sorted headphones into families
+
+`SupportedDeviceHelper` holds the device table. Every model carries a
+`FamilyType`, and the HD 4.50BTNC is entry 17:
+
+```java
+SUPPORTED_DEVICES.put(17, new SupportedDeviceModel(
+    17, 12, SupportedDeviceModel.FamilyType.OTHER, "HD 4.50BTNC", ...));
+```
+
+`FamilyType` has three values, and only one of them talks to hardware:
+
+| Family | Models | Device stack |
+| --- | --- | --- |
+| `EVEREST` | PXC 550, MB 660, MB 660 MS, Dior 550 | `EverestStack` |
+| `MOMENTUM` | MOMENTUM, MOMENTUM Free, HD1 range | `GenericDevice` |
+| `OTHER` | **HD 4.50BTNC**, HD 4.40BT, CX 7.00BT | `GenericDevice` |
+
+`DeviceFactory` is the whole decision:
+
+```java
+static IDevice getAudioSource(SupportedDevice supportedDevice) {
+    if (supportedDevice.isEverestDevice()) {
+        return new EverestStack();
+    }
+    return new GenericDevice();
+}
+```
+
+## `GenericDevice` sends nothing
+
+The class the HD 4.50BTNC is handed implements the device interface as a set of
+empty methods:
+
+```java
+class GenericDevice implements IDevice {
+    public boolean isSPPConnected()                            { return false; }
+    public void parse(byte[] bArr)                             { }
+    public void send(byte[] bArr)                              { }
+    public void setBTConnection(IRemoteDevice.IDeviceConnection c) { }
+```
+
+There is no protocol, no handshake and no write path. **CapTune never sent
+these headphones a single byte.** Its equaliser methods call
+`AudioWeaverLibrary`, a bundled native DSP that processed audio on the phone
+before it was streamed to the headset.
+
+By contrast `EverestStack` — the PXC 550 and MB 660 — carries a real protocol
+(`EverestTransmission` / `EverestReception` over an SPP socket on UUID
+`1ddce62a-ecb1-4455-8153-0743c87aec9f`), with opcodes for noise cancellation
+level, EQ mode, battery voltage and audio prompts. That is the app-facing
+control channel the HD 4.50 BTNC never had.
+
+This independently confirms the SDP evidence above, from the other end: the
+headphones advertise no control service, and the app never looked for one.
+
+## What this means for the rebuild
+
+Everything CapTune did for these headphones happened host-side, so all of it
+can be rebuilt host-side — and the tuning does not have to be guessed, because
+the curves shipped as data. They are extracted verbatim into
+`src/opencaptune/eq/presets.json`:
+
+- **14 bands**, centred at 35, 57, 92, 148, 238, 384, 620, 1000, 1613, 2601,
+  4196, 6767, 10195 and 17605 Hz — a constant 1.613 ratio, 0.69 octaves apart.
+- **9 presets**: Neutral, Loudness, Pop, Rock, Hip Hop, Electro, Jazz,
+  Classical, Voice. (A tenth entry, "Custom", is the user's scratch slot.)
+- **Bass and treble boost offset curves**, added on top of a preset and scaled
+  by a 0-100 slider, then clamped to ±12 dB.
+
+The only part that cannot be recovered is the filter design: the DSP was a
+closed native library. `opencaptune.eq` uses standard peaking biquads with a Q
+derived from the band spacing, which reproduces the intended response curve.

@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 
+from . import eq as equaliser
 from .bluetooth import uuids as uuid_table
 from .hostapp import HostAppError, ensure_bundle, run_helper
 from .survey import survey
@@ -63,6 +64,62 @@ def _print_survey(result, verbose: bool) -> None:
         print(json.dumps(result.records, indent=2))
 
 
+def _curve(gains: tuple[float, ...], width: int = 21) -> list[str]:
+    """A small ASCII column per band, centred on 0 dB."""
+    middle = width // 2
+    rows = []
+    for gain in gains:
+        offset = int(round(gain / equaliser.MAX_GAIN_DB * middle))
+        cells = [" "] * width
+        cells[middle] = "|"
+        low, high = sorted((middle, middle + offset))
+        for index in range(low, high + 1):
+            cells[index] = "#"
+        rows.append("".join(cells))
+    return rows
+
+
+def _print_preset(preset) -> None:
+    print(f"{preset.name}\n")
+    rows = _curve(preset.gains_db)
+    for frequency, gain, row in zip(equaliser.bands(), preset.gains_db, rows):
+        label = f"{frequency} Hz" if frequency < 1000 else f"{frequency / 1000:.3g} kHz"
+        print(f"  {label:>9}  {gain:+6.2f} dB  {row}")
+    print(f"\n  Q {equaliser.default_q():.2f} ({equaliser.band_width_octaves():.2f} octave bands)")
+
+
+def _export(preset, style: str, sample_rate: int) -> str:
+    if style == "json":
+        return json.dumps(
+            {
+                "name": preset.name,
+                "q": round(equaliser.default_q(), 4),
+                "bands": [
+                    {"frequency_hz": frequency, "gain_db": gain}
+                    for frequency, gain in zip(equaliser.bands(), preset.gains_db)
+                ],
+            },
+            indent=2,
+        )
+    if style == "apo":
+        # EqualizerAPO / AutoEQ parametric format, also read by many players.
+        lines = ["Preamp: -6.0 dB"]
+        q = equaliser.default_q()
+        for index, (frequency, gain) in enumerate(zip(equaliser.bands(), preset.gains_db), 1):
+            lines.append(
+                f"Filter {index}: ON PK Fc {frequency} Hz Gain {gain:.2f} dB Q {q:.3f}"
+            )
+        return "\n".join(lines)
+    if style == "biquad":
+        lines = []
+        for numerator, denominator in equaliser.filter_chain(preset, sample_rate):
+            b0, b1, b2 = numerator
+            _, a1, a2 = denominator
+            lines.append(f"{b0:.10f} {b1:.10f} {b2:.10f} {a1:.10f} {a2:.10f}")
+        return "\n".join(lines)
+    raise ValueError(f"unknown format {style!r}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="captune",
@@ -89,9 +146,41 @@ def main(argv: list[str] | None = None) -> int:
 
     subcommands.add_parser("bundle", help="rebuild the macOS Bluetooth helper bundle")
 
+    eq_parser = subcommands.add_parser("eq", help="CapTune's equaliser presets")
+    eq_commands = eq_parser.add_subparsers(dest="eq_command", required=True)
+    eq_commands.add_parser("list", help="list the presets CapTune shipped")
+
+    for name, help_text in (("show", "display a preset"), ("export", "write a preset out")):
+        command = eq_commands.add_parser(name, help=help_text)
+        command.add_argument("preset", help="preset name, e.g. Rock")
+        command.add_argument("--bass", type=int, default=0, metavar="0-100",
+                             help="bass boost strength, as CapTune's slider")
+        command.add_argument("--treble", type=int, default=0, metavar="0-100",
+                             help="treble boost strength, as CapTune's slider")
+        if name == "export":
+            command.add_argument("--format", default="apo", choices=("apo", "json", "biquad"),
+                                 help="apo: EqualizerAPO/AutoEQ parametric text (default)")
+            command.add_argument("--sample-rate", type=int, default=48000,
+                                 help="sample rate for biquad coefficients")
+
     arguments = parser.parse_args(argv)
 
     try:
+        if arguments.command == "eq":
+            if arguments.eq_command == "list":
+                for preset in equaliser.presets().values():
+                    span = f"{min(preset.gains_db):+.1f} to {max(preset.gains_db):+.1f} dB"
+                    print(f"  {preset.name:<12} {span}")
+                return 0
+            preset = equaliser.preset(arguments.preset).with_boosts(
+                bass=arguments.bass, treble=arguments.treble
+            )
+            if arguments.eq_command == "show":
+                _print_preset(preset)
+            else:
+                print(_export(preset, arguments.format, arguments.sample_rate))
+            return 0
+
         if arguments.command == "devices":
             _print_devices(run_helper({"action": "list_devices"})["devices"])
             return 0
@@ -121,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             _print_survey(result, arguments.verbose)
         return 0
-    except (HostAppError, NotImplementedError) as error:
+    except (HostAppError, NotImplementedError, KeyError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

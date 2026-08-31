@@ -86,6 +86,14 @@ def spectrum() -> dict:
     return _request({"action": "spectrum"}, timeout=2.0)
 
 
+def set_spatial(strength: int) -> dict:
+    return _request({"action": "set_spatial", "spatial": strength})
+
+
+def exposure() -> dict:
+    return _request({"action": "exposure"})
+
+
 def set_crossfeed(strength: int) -> dict:
     return _request({"action": "set_crossfeed", "crossfeed": strength})
 

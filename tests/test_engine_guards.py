@@ -44,3 +44,40 @@ def test_nothing_is_captured_from_an_input_device():
     # is why macOS has no reason to treat any of this as a microphone.
     engine = Engine(EngineConfig(output_device="Bogcifüles"))
     assert not hasattr(engine, "input") or engine.input is None
+
+
+def test_exposure_is_handed_over_in_seconds_not_samples(monkeypatch):
+    """Regression: energy per sample divided by seconds is not a mean square.
+
+    Accumulating mean-square weighted by frames and then dividing by seconds
+    inflates every level by 10*log10(sample_rate) — about 46 dB at 44.1 kHz,
+    which turned a quiet tone into a reported 125 dB.
+    """
+    import opencaptune.audio.engine as engine_module
+
+    engine = Engine(EngineConfig(output_device="Bogcifüles"))
+    recorded = []
+    monkeypatch.setattr(
+        engine_module.dose_tracker, "record", lambda e, s: recorded.append((e, s))
+    )
+
+    # Exactly one second of audio whose mean square is 0.25.
+    engine._dose_energy = 0.25 * engine.sample_rate
+    engine._dose_frames = engine.sample_rate
+    engine.flush_exposure()
+
+    energy, seconds = recorded[0]
+    assert seconds == pytest.approx(1.0)
+    assert energy / seconds == pytest.approx(0.25), "must come back as a mean square"
+
+
+def test_flushing_with_nothing_recorded_writes_nothing(monkeypatch):
+    import opencaptune.audio.engine as engine_module
+
+    engine = Engine(EngineConfig(output_device="Bogcifüles"))
+    recorded = []
+    monkeypatch.setattr(
+        engine_module.dose_tracker, "record", lambda e, s: recorded.append((e, s))
+    )
+    engine.flush_exposure()
+    assert recorded == []

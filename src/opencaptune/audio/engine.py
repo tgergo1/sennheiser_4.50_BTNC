@@ -14,9 +14,11 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
+from .. import dose as dose_tracker
 from .. import eq
 from ..eq import loudness as loudness_module
 from .crossfeed import Crossfeed
+from .spatial import Virtualiser
 from . import tap as system_tap
 from . import volume as volume_control
 from .devices import Device, default_output, resolve
@@ -32,6 +34,7 @@ class EngineConfig:
     loudness_phon: float | None = None
     reference_phon: float = loudness_module.DEFAULT_REFERENCE_PHON
     crossfeed: int = 0
+    spatial: int = 0
     manage_volume: bool = True
     bass: int = 0
     treble: int = 0
@@ -141,6 +144,12 @@ class Engine:
         self._crossfeed = Crossfeed(
             strength=config.crossfeed, sample_rate=self.sample_rate, channels=self.channels
         )
+        self._spatial = Virtualiser(
+            strength=config.spatial, sample_rate=self.sample_rate, channels=self.channels
+        )
+        # Accumulated between flushes; the audio callback must not touch disk.
+        self._dose_energy = 0.0
+        self._dose_frames = 0
         self._equaliser = Equaliser(
             self._preset_from(config.preset, config.bass, config.treble),
             sample_rate=self.sample_rate,
@@ -192,6 +201,24 @@ class Engine:
         with self._lock:
             self._crossfeed.set_strength(strength)
         self.config.crossfeed = strength
+
+    def set_spatial(self, strength: int) -> None:
+        """Change how far out in front the image sits, while streaming."""
+        with self._lock:
+            self._spatial.set_strength(strength)
+        self.config.spatial = strength
+
+    def flush_exposure(self) -> None:
+        """Write accumulated listening time out to the rolling history."""
+        with self._lock:
+            energy, frames = self._dose_energy, self._dose_frames
+            self._dose_energy, self._dose_frames = 0.0, 0
+        if frames:
+            seconds = frames / self.sample_rate
+            # energy is mean-square-weighted by *samples*; the store works in
+            # seconds, so convert before handing it over or every level comes
+            # out 10*log10(sample_rate) too high.
+            dose_tracker.record(energy / self.sample_rate, seconds)
 
     @property
     def preset(self) -> eq.Preset:
@@ -257,7 +284,14 @@ class Engine:
         if status:
             self.stats.glitches += 1
         with self._lock:
-            filtered = self._equaliser.process(self._crossfeed.process(indata))
+            filtered = self._equaliser.process(
+                self._crossfeed.process(self._spatial.process(indata))
+            )
+            # Energy, not level: it is what makes exposure addable over time.
+            # Weighted by frames here and converted to seconds at flush, so
+            # that energy divided by seconds gives back a mean square.
+            self._dose_energy += float(np.mean(np.square(filtered))) * frames
+            self._dose_frames += frames
             if self._watching_spectrum and frames:
                 self._measure_spectrum(filtered)
         outdata[:] = filtered
@@ -374,7 +408,14 @@ class Engine:
         if status:
             self.stats.glitches += 1
         with self._lock:
-            filtered = self._equaliser.process(self._crossfeed.process(indata))
+            filtered = self._equaliser.process(
+                self._crossfeed.process(self._spatial.process(indata))
+            )
+            # Energy, not level: it is what makes exposure addable over time.
+            # Weighted by frames here and converted to seconds at flush, so
+            # that energy divided by seconds gives back a mean square.
+            self._dose_energy += float(np.mean(np.square(filtered))) * frames
+            self._dose_frames += frames
             if self._watching_spectrum and frames:
                 self._measure_spectrum(filtered)
         self._ring.write(filtered)
@@ -405,6 +446,7 @@ class Engine:
                 stream.close()
                 setattr(self, attribute, None)
         self._ring = None
+        self.flush_exposure()
         self._close_capture()
         self._give_output_volume_back()
 
@@ -427,6 +469,7 @@ class Engine:
             ),
             "loudness_phon": self.config.loudness_phon,
             "crossfeed": self._crossfeed.strength,
+            "spatial": self._spatial.strength,
             "output_volume_raised_from": (
                 round(self._restore_volume[1], 3) if self._restore_volume else None
             ),

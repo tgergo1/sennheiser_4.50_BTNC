@@ -160,7 +160,8 @@ def _print_status(report: dict) -> None:
     print(f"  calibration {correction or 'off'}")
     phon = report.get("loudness_phon")
     print(f"  loudness    {'off' if phon is None else f'{phon:g} phon'}"
-          f"     crossfeed {report.get('crossfeed', 0)}%")
+          f"     crossfeed {report.get('crossfeed', 0)}%"
+          f"     spatial {report.get('spatial', 0)}%")
     raised = report.get("output_volume_raised_from")
     if raised is not None:
         print(f"  volume      output device raised to full from {raised:.0%} "
@@ -199,6 +200,13 @@ def main(argv: list[str] | None = None) -> int:
 
     subcommands.add_parser("bundle", help="rebuild the macOS Bluetooth helper bundle")
     subcommands.add_parser("ui", help="open the menu bar app")
+
+    listening = subcommands.add_parser(
+        "listening", help="how much you have listened to, and how loud"
+    )
+    listening_commands = listening.add_subparsers(dest="listening_command", required=True)
+    listening_commands.add_parser("dose", help="exposure over the last seven days")
+    listening_commands.add_parser("reset", help="clear the history")
 
     headset = subcommands.add_parser(
         "headset", help="what can be read from and sent to the headset itself"
@@ -255,6 +263,11 @@ def main(argv: list[str] | None = None) -> int:
     forget = eq_commands.add_parser("forget", help="delete an imported correction")
     forget.add_argument("name")
 
+    spatial_parser = eq_commands.add_parser(
+        "spatial", help="set the speaker virtualisation while running"
+    )
+    spatial_parser.add_argument("strength", type=int, metavar="0-100")
+
     crossfeed_parser = eq_commands.add_parser(
         "crossfeed", help="set the crossfeed strength while running"
     )
@@ -278,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="measured headphone correction to apply first, e.g. 'HD 4.50 BTNC'")
     start.add_argument("--crossfeed", type=int, default=0, metavar="0-100",
                        help="narrow the stereo image at low frequencies")
+    start.add_argument("--spatial", type=int, default=0, metavar="0-100",
+                       help="render as virtual speakers in front of you")
     start.add_argument("--loudness", type=float, default=None, metavar="PHON",
                        help="listening level, for equal-loudness compensation (0-90)")
     start.add_argument("--reference-phon", type=float, default=80.0, metavar="PHON",
@@ -344,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
                         preset=arguments.preset,
                         calibration=arguments.calibration,
                         crossfeed=arguments.crossfeed,
+                        spatial=arguments.spatial,
                         loudness_phon=arguments.loudness,
                         reference_phon=arguments.reference_phon,
                         bass=arguments.bass,
@@ -434,6 +450,11 @@ def main(argv: list[str] | None = None) -> int:
                       "Corrections shipped with the app cannot be removed.")
                 return 1
 
+            if arguments.eq_command == "spatial":
+                report = daemon.set_spatial(arguments.strength)
+                print(f"Spatial is now {report['spatial']}%.")
+                return 0
+
             if arguments.eq_command == "crossfeed":
                 report = daemon.set_crossfeed(arguments.strength)
                 print(f"Crossfeed is now {report['crossfeed']}%.")
@@ -473,6 +494,37 @@ def main(argv: list[str] | None = None) -> int:
 
         if arguments.command == "devices":
             _print_devices(run_helper({"action": "list_devices"})["devices"])
+            return 0
+
+        if arguments.command == "listening":
+            from . import dose as dose_tracker
+
+            if arguments.listening_command == "reset":
+                dose_tracker.reset()
+                print("Listening history cleared.")
+                return 0
+
+            try:
+                daemon.exposure()   # flush anything the daemon is still holding
+            except HostAppError:
+                pass
+            summary = dose_tracker.summary()
+            if summary.hours <= 0:
+                print("Nothing listened to in the last seven days.")
+                return 0
+            bar_width = 28
+            filled = min(bar_width, int(summary.dose_fraction * bar_width))
+            bar = "#" * filled + "." * (bar_width - filled)
+            print(f"  Last 7 days   {summary.hours:.1f} hours")
+            print(f"  Average       {summary.average_db:.0f} dB")
+            print(f"  Loudest       {summary.loudest_db:.0f} dB")
+            print(f"  Weekly dose   [{bar}] {summary.percentage:.0f}%")
+            if summary.is_over:
+                print("\n  Over a full weekly dose. At this average level the "
+                      f"limit is about {summary.allowance_hours_at(summary.average_db):.1f} hours.")
+            print(f"\n  Estimated from the signal, assuming full scale is "
+                  f"{dose_tracker.FULL_SCALE_SPL:.0f} dB SPL at these headphones. "
+                  "The trend is sound; the absolute figure needs a meter to calibrate.")
             return 0
 
         if arguments.command == "headset":

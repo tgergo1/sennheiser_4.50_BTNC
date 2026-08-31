@@ -212,6 +212,30 @@ hear what it does.
 Verified against the hardware at six frequencies, exercising both shelves and
 the largest cut and boost, to within 0.3% of the predicted response.
 
+## Spatial audio
+
+```
+captune eq spatial 60
+```
+
+Headphones put each channel straight into one ear, which never happens in life
+and is why stereo sits between your ears instead of in front of you. With
+speakers each ear also hears the *other* one — later, because it travelled
+further around your head, and duller, because your head was in the way. Those
+two cues are most of what tells you a sound is out there.
+
+This puts both back, as a pair of virtual speakers at ±30°: the delay comes
+from Woodworth's formula for a spherical head (0.261 ms at that angle) and the
+shadow from a shelf filter on the crossed path.
+
+It is a structural model, not a measured head-related transfer function. There
+is no pinna modelling and no elevation, and without a head tracker the image
+does not stay put when you turn — a measured HRTF would need a dataset and a
+listener it was measured on. This is the part that does most of the work.
+
+Verified against the hardware: the level at 0%, 50% and 100% strength matched
+prediction to 0.0%.
+
 ## Crossfeed
 
 On speakers each ear hears both channels; on headphones each hears only its
@@ -254,6 +278,38 @@ It cannot know your actual sound pressure level — that needs the headphone's
 sensitivity and the amplifier gain — so you tell it roughly where you are.
 Verified against the hardware to within 0.07 dB.
 
+## Listening exposure
+
+```
+captune listening dose
+```
+
+```
+  Last 7 days   6.2 hours
+  Average       78 dB
+  Loudest       91 dB
+  Weekly dose   [########....................] 29%
+```
+
+Hearing damage depends on loudness and time *together*. The occupational
+standard treats 80 dB for 40 hours a week as a full dose and trades 3 dB
+against half the time, so 86 dB for 10 hours costs the same as 80 dB for 40.
+An hour of something loud can outweigh a week of something quiet — which is
+why this accumulates energy rather than sampling loudness, in hourly buckets
+over a rolling week. The loudest single interval is kept separately, because
+averaging a short loud burst over an hour hides exactly the thing worth
+seeing.
+
+The menu bar shows the same figure, and `captune listening reset` clears it.
+
+**On the accuracy of the number.** The signal level is known exactly and the
+pressure at your ear is not: that depends on the headphone's sensitivity and
+the amplifier behind it, and nothing reports either. The figure rests on one
+stated assumption — that full-scale audio at full volume comes to 100 dB SPL
+at these headphones. Calibrate that against a sound level meter and the number
+becomes real; leave it and the trend is still honest even when the absolute
+value is not.
+
 ## Using the presets somewhere else
 
 ```
@@ -273,7 +329,9 @@ available.
 | `captune eq list` | the presets CapTune shipped |
 | `captune eq calibrations` | measured headphone corrections |
 | `captune eq calibrate NAME\|off` | apply or remove a correction while running |
+| `captune eq spatial 0-100` | render as virtual speakers in front of you |
 | `captune eq crossfeed 0-100` | narrow the stereo image at low frequencies |
+| `captune listening dose\|reset` | how much you have listened to, and how loud |
 | `captune eq loudness PHON\|off` | equal-loudness compensation for your listening level |
 | `captune eq show NAME [--bass N] [--treble N]` | display a curve |
 | `captune eq export NAME [--format apo\|json\|biquad]` | write a curve out |

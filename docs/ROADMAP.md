@@ -36,7 +36,7 @@ Worth doing properly: randomise presentation order, level-match the pair (an
 uncompensated level difference is heard as "better"), and allow "no
 preference".
 
-### 3. Crossfeed / the "Virtualizer" — **done**
+### 3. Crossfeed, and speaker virtualisation — **done**
 
 CapTune had `setVirtualizerStrength`. On headphones each ear hears only its own
 channel, which is why hard-panned mixes feel like they are inside your head.

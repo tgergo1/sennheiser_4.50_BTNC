@@ -99,12 +99,17 @@ class MenuBarController(NSObject):
         self.calibration_menu = self._submenu("Calibration", "waveform.path.ecg")
         self.menu.addItem_(NSMenuItem.separatorItem())
 
+        self.spatial_slider = self._slider(
+            "Spatial", 0, 100, self._on_spatial, "{:.0f}%")
         self.crossfeed_slider = self._slider(
             "Crossfeed", 0, 100, self._on_crossfeed, "{:.0f}%")
         self.loudness_slider = self._slider(
             "Loudness", 49, 90, self._on_loudness, "{:.0f}")
         self.headset_slider = self._slider(
             "Headset volume", 0, 100, self._on_headset_volume, "{:.0f}%")
+        self.menu.addItem_(NSMenuItem.separatorItem())
+
+        self.dose_item = self._add(self.menu, "Listening…", None, symbol="ear.badge.waveform")
         self.menu.addItem_(NSMenuItem.separatorItem())
 
         self.window_item = self._add(self.menu, "Equaliser window…", "openWindow:",
@@ -276,6 +281,8 @@ class MenuBarController(NSObject):
                    0 if current is None else (names.index(current) + 1 if current in names else None),
                    enabled=running)
 
+        self.spatial_slider.set_value(
+            float(self.status.get("spatial", 0)) if running else 0.0, enabled=running)
         self.crossfeed_slider.set_value(
             float(self.status.get("crossfeed", 0)) if running else 0.0, enabled=running)
         phon = self.status.get("loudness_phon") if running else None
@@ -304,6 +311,7 @@ class MenuBarController(NSObject):
             else "Apply a profile first: this waits for that profile's output device."
         )
         self.follow_item.setState_(1 if app_settings.get("follow_device") else 0)
+        self._show_dose()
         self.window_item.setEnabled_(running)
         self.soundcheck_item.setEnabled_(running)
 
@@ -321,6 +329,25 @@ class MenuBarController(NSObject):
             entry = menu.itemAtIndex_(position)
             entry.setState_(1 if index is not None and position == index else 0)
             entry.setEnabled_(enabled)
+
+    @objc.python_method
+    def _show_dose(self):
+        from . import dose as dose_tracker
+
+        try:
+            summary = dose_tracker.summary()
+        except Exception:  # noqa: BLE001
+            return
+        if summary.hours <= 0:
+            self.dose_item.setTitle_("No listening recorded yet")
+            return
+        self.dose_item.setTitle_(
+            f"{summary.hours:.1f} h this week  ·  {summary.percentage:.0f}% of safe dose"
+        )
+        self.dose_item.setToolTip_(
+            f"Average {summary.average_db:.0f} dB, loudest {summary.loudest_db:.0f} dB. "
+            "Estimated from the signal; calibrate against a meter for an absolute figure."
+        )
 
     @objc.python_method
     def _fill_profiles(self):
@@ -374,6 +401,10 @@ class MenuBarController(NSObject):
             action(value)
         except Exception:  # noqa: BLE001 - dragging must not raise dialogs
             pass
+
+    @objc.python_method
+    def _on_spatial(self, value):
+        self._send("spatial", int(round(value)), daemon.set_spatial)
 
     @objc.python_method
     def _on_crossfeed(self, value):

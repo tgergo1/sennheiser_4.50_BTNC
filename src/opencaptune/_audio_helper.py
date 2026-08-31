@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 import socket
 import sys
 import traceback
@@ -65,6 +67,20 @@ def _serve(engine: Engine, socket_path: Path, log: Path) -> None:
                     elif action == "spectrum":
                         response = {"ok": True, "spectrum": engine.spectrum(),
                                     "gains": [round(g, 2) for g in engine.preset.gains_db]}
+                    elif action == "set_spatial":
+                        engine.set_spatial(int(request["spatial"]))
+                        response = {"ok": True, **engine.status()}
+                    elif action == "exposure":
+                        from . import dose  # noqa: PLC0415
+
+                        engine.flush_exposure()
+                        summary = dose.summary()
+                        response = {"ok": True, "hours": round(summary.hours, 3),
+                                    "average_db": (None if summary.average_db == float("-inf")
+                                                   else round(summary.average_db, 1)),
+                                    "loudest_db": (None if summary.loudest_db == float("-inf")
+                                                   else round(summary.loudest_db, 1)),
+                                    "percentage": round(summary.percentage, 1)}
                     elif action == "set_crossfeed":
                         engine.set_crossfeed(int(request["crossfeed"]))
                         response = {"ok": True, **engine.status()}
@@ -109,6 +125,18 @@ def main(argv: list[str]) -> int:
     try:
         engine = Engine(EngineConfig(**settings))
         engine.start()
+
+        # The audio callback must never touch disk, so exposure is written out
+        # from here instead.
+        def flush_periodically():
+            while True:
+                time.sleep(60)
+                try:
+                    engine.flush_exposure()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        threading.Thread(target=flush_periodically, daemon=True).start()
         _log(log, f"started: {json.dumps(engine.status())}")
         ready.write_text(json.dumps({"ok": True, "pid": os.getpid(), **engine.status()}))
         _serve(engine, socket_path, log)

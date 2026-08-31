@@ -25,6 +25,17 @@ def _dispatch(request: dict) -> dict:
     if action == "rfcomm_sweep":
         channels = range(request.get("first", 1), request.get("last", 30) + 1)
         return {"channels": macos.rfcomm_sweep(request["address"], channels)}
+    if action == "headset_volume":
+        from .audio import volume  # noqa: PLC0415
+
+        device = volume.find_output_device(request["name"])
+        return {"volume": volume.get_volume(device) if device is not None else None}
+    if action == "set_headset_volume":
+        from .audio import volume  # noqa: PLC0415
+
+        device = volume.find_output_device(request["name"])
+        changed = volume.set_volume(device, request["volume"]) if device is not None else False
+        return {"changed": changed}
     if action == "survey":
         address = request["address"]
         result = {

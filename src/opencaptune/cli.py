@@ -15,6 +15,23 @@ from .hostapp import HostAppError, ensure_bundle, launch_detached, run_helper
 from .survey import survey
 
 
+def _headset_volume(name: str):
+    """The headset's own gain, via the helper (CoreAudio needs the bundle)."""
+    try:
+        response = run_helper({"action": "headset_volume", "name": name})
+        return response.get("volume")
+    except HostAppError:
+        return None
+
+
+def _set_headset_volume(name: str, level: float) -> bool:
+    try:
+        response = run_helper({"action": "set_headset_volume", "name": name, "volume": level})
+        return bool(response.get("changed"))
+    except HostAppError:
+        return False
+
+
 def _print_devices(devices: list[dict]) -> None:
     if not devices:
         print("No paired Bluetooth devices.")
@@ -182,6 +199,17 @@ def main(argv: list[str] | None = None) -> int:
 
     subcommands.add_parser("bundle", help="rebuild the macOS Bluetooth helper bundle")
     subcommands.add_parser("ui", help="open the menu bar app")
+
+    headset = subcommands.add_parser(
+        "headset", help="what can be read from and sent to the headset itself"
+    )
+    headset_commands = headset.add_subparsers(dest="headset_command", required=True)
+    headset_commands.add_parser("status", help="battery and volume of connected headsets")
+    headset_volume = headset_commands.add_parser(
+        "volume", help="set the headset's own amplifier gain over AVRCP"
+    )
+    headset_volume.add_argument("device", help="device name, e.g. your headphones")
+    headset_volume.add_argument("percent", type=int, metavar="0-100")
 
     profile_parser = subcommands.add_parser("profile", help="named setups")
     profile_commands = profile_parser.add_subparsers(dest="profile_command", required=True)
@@ -447,6 +475,37 @@ def main(argv: list[str] | None = None) -> int:
 
         if arguments.command == "devices":
             _print_devices(run_helper({"action": "list_devices"})["devices"])
+            return 0
+
+        if arguments.command == "headset":
+            from .bluetooth import headset as headset_info
+
+            if arguments.headset_command == "status":
+                found = headset_info.connected_headsets()
+                if not found:
+                    print("No Bluetooth devices connected.")
+                    return 0
+                for entry in found:
+                    print(f"  {entry['name']}  ({entry['address']})")
+                    if entry["battery"] is not None:
+                        print(f"    battery   {entry['battery']}%  "
+                              "(reported by the headset over HFP)")
+                    level = _headset_volume(entry["name"])
+                    if level is not None:
+                        print(f"    volume    {level:.0%}  "
+                              f"= step {round(level * 128)} of 128, "
+                              "sent to the headset over AVRCP")
+                    if entry["vendor_id"]:
+                        print(f"    chipset   vendor {entry['vendor_id']}")
+                return 0
+
+            level = max(0, min(100, arguments.percent)) / 100.0
+            if not _set_headset_volume(arguments.device, level):
+                print(f"error: {arguments.device!r} has no settable volume",
+                      file=sys.stderr)
+                return 1
+            print(f"Sent absolute volume step {round(level * 128)} of 128 "
+                  f"to {arguments.device} over AVRCP.")
             return 0
 
         if arguments.command == "profile":

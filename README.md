@@ -286,6 +286,22 @@ available.
 | `captune survey ADDR` | report a headphone's control channel, if any |
 | `captune bundle` | rebuild the macOS helper bundle |
 
+## Talking to the headset itself
+
+```
+captune headset status
+captune headset volume "YourHeadphones" 100
+```
+
+The HD 4.50 BTNC has no vendor control channel, but standard profiles still
+carry traffic in both directions. Setting its volume transmits an AVRCP
+`SetAbsoluteVolume` that the headset applies in its own amplifier — a command,
+not a local gain — and the headset reports its battery back over HFP. Both are
+in the menu bar under **Headset volume**.
+
+[docs/ROADMAP.md](docs/ROADMAP.md) has the evidence, and the table of HFP
+commands this headset advertises that macOS will not let us send.
+
 ## What else is possible
 
 [docs/ROADMAP.md](docs/ROADMAP.md) inventories what can still be built — from

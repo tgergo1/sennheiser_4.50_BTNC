@@ -56,6 +56,7 @@ class MenuBarController(NSObject):
             return None
         self.status = None
         self.output_device = None
+        self._headset_name = None
         # Set before the first refresh: device enumeration can fail, and
         # togglePower_ reads this.
         self._outputs = []
@@ -100,6 +101,7 @@ class MenuBarController(NSObject):
         self.crossfeed_menu = self._submenu("Crossfeed")
         self.loudness_menu = self._submenu("Loudness")
         self.output_menu = self._submenu("Output device")
+        self.headset_menu = self._submenu("Headset volume")
         self.menu.addItem_(NSMenuItem.separatorItem())
 
         self.window_item = self._add(self.menu, "Equaliser window…", "openWindow:")
@@ -245,6 +247,7 @@ class MenuBarController(NSObject):
 
         self._fill_profiles()
         self._fill_outputs()
+        self._fill_headset()
 
         from . import autostart
 
@@ -274,6 +277,36 @@ class MenuBarController(NSObject):
         self.profile_menu.addItem_(NSMenuItem.separatorItem())
         save = self._add(self.profile_menu, "Save current as…", "saveProfile:")
         save.setEnabled_(self.status is not None)
+
+    @objc.python_method
+    def _fill_headset(self):
+        """The headset's own amplifier gain, and what it reports about itself.
+
+        This is a different thing from the equaliser's preamp: the preamp is
+        digital attenuation here, while this is a command sent over the air
+        that the headset applies in its own amplifier.
+        """
+        from .bluetooth import headset as headset_info
+
+        self.headset_menu.removeAllItems()
+        try:
+            found = headset_info.connected_headsets()
+        except Exception:  # noqa: BLE001
+            found = []
+        target = self.status["output"] if self.status else None
+        entry = next((e for e in found if e["name"] == target), None) or (
+            found[0] if found else None
+        )
+        self._headset_name = entry["name"] if entry else None
+
+        if entry is None:
+            self._add(self.headset_menu, "No headset connected", None)
+            return
+        if entry["battery"] is not None:
+            self._add(self.headset_menu, f"{entry['name']} — battery {entry['battery']}%", None)
+            self.headset_menu.addItem_(NSMenuItem.separatorItem())
+        for percent in (100, 75, 50, 25):
+            self._add(self.headset_menu, f"{percent}%", "chooseHeadsetVolume:", tag=percent)
 
     @objc.python_method
     def _fill_outputs(self):
@@ -354,6 +387,20 @@ class MenuBarController(NSObject):
     def chooseOutput_(self, sender):
         self.output_device = self._outputs[sender.tag()].name
         self.refresh_()
+
+    @objc.IBAction
+    def chooseHeadsetVolume_(self, sender):
+        from .hostapp import run_helper
+
+        name = getattr(self, "_headset_name", None)
+        if not name:
+            return
+        self._guard(
+            lambda: run_helper(
+                {"action": "set_headset_volume", "name": name,
+                 "volume": sender.tag() / 100.0}
+            )
+        )
 
     @objc.IBAction
     def chooseProfile_(self, sender):

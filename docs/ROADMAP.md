@@ -89,6 +89,69 @@ contours, so it stops applying the boost as you turn it up.
 macOS already knows the charge level over HFP; `captune devices` could surface
 it, along with connection state and the negotiated codec.
 
+## What can actually be sent to the headset
+
+The headset has no vendor control channel, but "no vendor channel" is not "no
+channel". Two standard paths carry real traffic, and one more is advertised by
+the headset but blocked by macOS.
+
+### AVRCP Absolute Volume — works, and is already in use
+
+Writing a CoreAudio output device's volume makes macOS transmit an AVRCP
+`SetAbsoluteVolume` over the air, which the headset applies in its **own
+amplifier**. This is not a local gain: it is a command the headset obeys.
+
+The evidence is in the quantisation. Readbacks land on exact multiples of
+1/128 — 0.5625 is 72/128, 0.78125 is exactly 100/128 — because the scalar is
+mapped onto Absolute Volume's 7-bit field. Nothing else would quantise that
+way.
+
+So the volume takeover has been sending the headset commands all along.
+`captune headset volume "Name" 100` now does it deliberately.
+
+Worth knowing this is a *different gain stage* from the equaliser's preamp.
+The preamp attenuates digitally, before the audio is encoded and transmitted;
+this sets the analogue gain at the other end. For a digital chain, keeping the
+headset high and attenuating digitally is usually right.
+
+### Battery — readable, in the direction we cannot write
+
+The headset reports its charge over HFP using Apple's `AT+IPHONEACCEV`
+extension. We cannot write to that channel, but macOS surfaces what it
+carries, so `captune headset status` and the menu bar can show it.
+
+### HFP AT commands — advertised by the headset, blocked by macOS
+
+The headset's own HFP service record says what it accepts: HFP 1.6, features
+`0x3A`, which decodes as three-way calling, **voice recognition activation**,
+**remote volume control**, and enhanced call status.
+
+That means these are in scope *for this device*:
+
+| Command | Effect |
+| --- | --- |
+| `+VGS: n` | set the headset's speaker gain, 0–15 — a volume path independent of AVRCP |
+| `+VGM: n` | set microphone gain |
+| `AT+BVRA=1` | activate voice recognition — the headset advertises support |
+| `+CIEV: i,v` | push indicators: service, signal, roam, battery, call state |
+| `RING` / `+CLIP:` | make it ring, and announce a caller |
+| vendor `AT` | the actual unexplored surface |
+
+macOS even ships the API for it: `IOBluetoothHandsFreeAudioGateway` has
+`sendResponse:`, `setOutputVolume:`, `setIndicator:value:`, `setCodecID:`
+(CVSD / mSBC / AAC-ELD) and `setVendorID:`.
+
+**It does not work here.** The gateway resolves the service record correctly —
+channel 1, features 58 — and then `openRFCOMMChannel` returns nothing and the
+service level connection never comes up. It is the same wall as the RFCOMM
+sweep: the system holds that channel and will not share it. The API exists;
+the channel does not open.
+
+A Linux host owns its own HFP channel, so this is where a Raspberry Pi stops
+being optional. Everything in that table becomes testable there, and probing
+for vendor `AT` commands is the one genuinely unexplored surface left on this
+headset.
+
 ## Tier 2 — protocol probing, still no soldering
 
 macOS owns HFP and AVRCP and will not share them, so all of this needs a Linux

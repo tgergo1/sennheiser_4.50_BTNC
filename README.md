@@ -60,10 +60,15 @@ the permission plumbing are macOS-specific.
 captune ui
 ```
 
-A sliders icon appears in the menu bar. From it you can start and stop the
-equaliser, pick the output device, switch preset, calibration, crossfeed and
-loudness while music is playing, apply saved profiles, and open the two
-windows below.
+A sliders icon appears in the menu bar. The menu opens onto what the equaliser
+is currently doing — the preset and calibration in force, the device, its
+battery, the preamp — over a live spectrum of whatever is playing. Crossfeed,
+loudness and the headset's own volume are continuous sliders that take effect
+as you drag them; preset, calibration, profiles and output device are below,
+along with the equaliser window and Sound Check.
+
+The spectrum is only measured while the menu is open, so nothing is computed
+for a display nobody is looking at.
 
 It holds no state of its own — everything it shows is read back from the
 daemon every two seconds, so the menu and the audio can never disagree, and

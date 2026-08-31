@@ -18,6 +18,7 @@ import traceback
 import objc
 from AppKit import (
     NSAlert,
+    NSMakeRect,
     NSApplication,
     NSApplicationActivationPolicyAccessory,
     NSImage,
@@ -36,14 +37,12 @@ from . import profiles as profile_store
 from . import settings as app_settings
 from .audio.engine import EngineConfig
 from .hostapp import HostAppError
+from .menuviews import HeaderView, SliderRow
 
 REFRESH_SECONDS = 2.0
 
-CROSSFEED_STEPS = [0, 25, 50, 75, 100]
-LOUDNESS_STEPS = [None, 50.0, 60.0, 70.0, 80.0]
-
-def _label_for_loudness(phon: float | None) -> str:
-    return "Off" if phon is None else f"{phon:g} phon"
+#: Below this the loudness slider means "off" rather than a listening level.
+LOUDNESS_OFF_BELOW = 50.0
 
 
 class MenuBarController(NSObject):
@@ -58,6 +57,9 @@ class MenuBarController(NSObject):
         # togglePower_ reads this.
         self._outputs = []
         self._profiles = []
+        self._spectrum = []
+        self._spectrum_timer = None
+        self._last_sent = {}
         self._build()
         self.refresh_()
         self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
@@ -83,45 +85,61 @@ class MenuBarController(NSObject):
         self.menu = NSMenu.alloc().init()
         self.menu.setAutoenablesItems_(False)
 
-        self.state_item = self._add(self.menu, "…", None)
-        self.routing_item = self._add(self.menu, "", None)
+        self.menu.setDelegate_(self)
+
+        self.header = HeaderView.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 96))
+        header_item = NSMenuItem.alloc().init()
+        header_item.setView_(self.header)
+        self.menu.addItem_(header_item)
         self.menu.addItem_(NSMenuItem.separatorItem())
 
-        self.power_item = self._add(self.menu, "Start", "togglePower:")
+        self.power_item = self._add(self.menu, "Start", "togglePower:", symbol="play.fill")
         self.menu.addItem_(NSMenuItem.separatorItem())
 
-        self.profile_menu = self._submenu("Profiles")
+        self.profile_menu = self._submenu("Profiles", "square.stack")
+        self.preset_menu = self._submenu("Preset", "slider.horizontal.3")
+        self.calibration_menu = self._submenu("Calibration", "waveform.path.ecg")
         self.menu.addItem_(NSMenuItem.separatorItem())
 
-        self.preset_menu = self._submenu("Preset")
-        self.calibration_menu = self._submenu("Calibration")
-        self.crossfeed_menu = self._submenu("Crossfeed")
-        self.loudness_menu = self._submenu("Loudness")
-        self.output_menu = self._submenu("Output device")
-        self.headset_menu = self._submenu("Headset volume")
+        self.crossfeed_slider = self._slider(
+            "Crossfeed", 0, 100, self._on_crossfeed, "{:.0f}%")
+        self.loudness_slider = self._slider(
+            "Loudness", 49, 90, self._on_loudness, "{:.0f}")
+        self.headset_slider = self._slider(
+            "Headset volume", 0, 100, self._on_headset_volume, "{:.0f}%")
         self.menu.addItem_(NSMenuItem.separatorItem())
 
-        self.window_item = self._add(self.menu, "Equaliser window…", "openWindow:")
-        self.soundcheck_item = self._add(self.menu, "Sound Check…", "openSoundCheck:")
+        self.window_item = self._add(self.menu, "Equaliser window…", "openWindow:",
+                                     symbol="waveform")
+        self.soundcheck_item = self._add(self.menu, "Sound Check…", "openSoundCheck:",
+                                         symbol="ear")
         self.menu.addItem_(NSMenuItem.separatorItem())
 
+        self.output_menu = self._submenu("Output device", "hifispeaker")
         self.login_item = self._add(self.menu, "Start at login", "toggleAutostart:")
         self.follow_item = self._add(self.menu, "Follow device", "toggleFollowDevice:")
         self.menu.addItem_(NSMenuItem.separatorItem())
-        self._add(self.menu, "Quit", "quit:")
+        self._add(self.menu, "Quit", "quit:", symbol="power")
         self.item.setMenu_(self.menu)
 
         for index, preset in enumerate(equaliser.presets()):
             self._add(self.preset_menu, preset, "choosePreset:", tag=index)
-        for index, value in enumerate(CROSSFEED_STEPS):
-            self._add(self.crossfeed_menu, "Off" if value == 0 else f"{value}%",
-                      "chooseCrossfeed:", tag=index)
-        for index, value in enumerate(LOUDNESS_STEPS):
-            self._add(self.loudness_menu, _label_for_loudness(value), "chooseLoudness:", tag=index)
+    @objc.python_method
+    def _slider(self, caption, minimum, maximum, handler, formatter):
+        row = SliderRow.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 28))
+        row.configure(caption, minimum, maximum, handler, formatter)
+        entry = NSMenuItem.alloc().init()
+        entry.setView_(row)
+        self.menu.addItem_(entry)
+        return row
 
     @objc.python_method
-    def _add(self, menu, title, action, tag=None):
+    def _add(self, menu, title, action, tag=None, symbol=None):
         entry = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
+        if symbol:
+            image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol, title)
+            if image is not None:
+                entry.setImage_(image)
         if action:
             entry.setTarget_(self)
             entry.setEnabled_(True)
@@ -133,8 +151,12 @@ class MenuBarController(NSObject):
         return entry
 
     @objc.python_method
-    def _submenu(self, title):
+    def _submenu(self, title, symbol=None):
         parent = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, None, "")
+        if symbol:
+            image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol, title)
+            if image is not None:
+                parent.setImage_(image)
         submenu = NSMenu.alloc().init()
         submenu.setAutoenablesItems_(False)
         parent.setSubmenu_(submenu)
@@ -187,31 +209,58 @@ class MenuBarController(NSObject):
         except Exception:  # noqa: BLE001
             return None
         target = self.status["output"] if self.status else self.output_device
-        return next((e for e in found if e["name"] == target), None) or (
+        entry = next((e for e in found if e["name"] == target), None) or (
             found[0] if found else None
         )
+        if entry is not None:
+            entry = dict(entry, volume=self._headset_volume(entry["name"]))
+        return entry
+
+    @objc.python_method
+    def _headset_volume(self, name):
+        from .hostapp import run_helper
+
+        try:
+            return run_helper({"action": "headset_volume", "name": name}).get("volume")
+        except Exception:  # noqa: BLE001 - only used to position a slider
+            return None
 
     @objc.python_method
     def _apply_state(self):
         running = self.status is not None
         headset = self._headset_info()
         self._headset_name = headset["name"] if headset else None
-        battery = f" · battery {headset['battery']}%" if headset and headset["battery"] is not None else ""
-        self.power_item.setTitle_("Stop" if running else "Start")
 
-        if not running:
-            self.state_item.setTitle_("Not running")
-            self.routing_item.setHidden_(not battery)
-            self.routing_item.setTitle_(f"{headset['name']}{battery}" if headset else "")
-        else:
-            preset = self.status["preset"]
+        self.power_item.setTitle_("Stop" if running else "Start")
+        power_symbol = "stop.fill" if running else "play.fill"
+        image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            power_symbol, self.power_item.title()
+        )
+        if image is not None:
+            self.power_item.setImage_(image)
+
+        if running:
             calibration = self.status.get("calibration")
-            self.state_item.setTitle_(preset if not calibration else f"{preset} + {calibration}")
-            self.routing_item.setHidden_(False)
-            self.routing_item.setTitle_(
-                f"{self.status['output']}{battery} · {self.status['preamp_db']:+.1f} dB"
-                + (f" · {self.status['glitches']} glitches" if self.status["glitches"] else "")
-            )
+            title = self.status["preset"]
+            if calibration:
+                title += f" + {calibration}"
+            parts = [self.status["output"]]
+            if headset and headset["battery"] is not None:
+                parts.append(f"{headset['battery']}%")
+            parts.append(f"{self.status['preamp_db']:+.1f} dB")
+            if self.status["glitches"]:
+                parts.append(f"{self.status['glitches']} glitches")
+            subtitle = "  ·  ".join(parts)
+        else:
+            title = "Not running"
+            parts = []
+            if headset:
+                parts.append(headset["name"])
+                if headset["battery"] is not None:
+                    parts.append(f"{headset['battery']}%")
+            subtitle = "  ·  ".join(parts)
+
+        self.header.update(title, subtitle, self._spectrum, running)
 
         presets = list(equaliser.presets())
         self._tick(self.preset_menu,
@@ -229,28 +278,16 @@ class MenuBarController(NSObject):
                    0 if current is None else (names.index(current) + 1 if current in names else None),
                    enabled=running)
 
-        crossfeed = self.status.get("crossfeed", 0) if running else None
-        self._tick(self.crossfeed_menu,
-                   CROSSFEED_STEPS.index(crossfeed) if crossfeed in CROSSFEED_STEPS else None,
-                   enabled=running)
-
+        self.crossfeed_slider.set_value(
+            float(self.status.get("crossfeed", 0)) if running else 0.0, enabled=running)
         phon = self.status.get("loudness_phon") if running else None
-        self._tick(self.loudness_menu,
-                   LOUDNESS_STEPS.index(phon) if phon in LOUDNESS_STEPS else None,
-                   enabled=running)
+        self.loudness_slider.set_value(float(phon) if phon else 49.0, enabled=running)
+        level = headset["volume"] if headset and headset.get("volume") is not None else None
+        self.headset_slider.set_value(
+            (level or 0.0) * 100.0, enabled=headset is not None and level is not None)
 
         self._fill_profiles()
         self._fill_outputs()
-        self._fill_headset(headset)
-
-        button = self.item.button()
-        if headset and headset["battery"] is not None:
-            button.setToolTip_(f"{headset['name']} — battery {headset['battery']}%")
-            # Shown beside the icon only when it is worth noticing.
-            button.setTitle_(f" {headset['battery']}%" if headset["battery"] <= 30 else "")
-        else:
-            button.setToolTip_("OpenCapTune")
-            button.setTitle_("")
 
         from . import autostart
 
@@ -258,6 +295,14 @@ class MenuBarController(NSObject):
         self.follow_item.setState_(1 if app_settings.get("follow_device") else 0)
         self.window_item.setEnabled_(running)
         self.soundcheck_item.setEnabled_(running)
+
+        button = self.item.button()
+        if headset and headset["battery"] is not None:
+            button.setToolTip_(f"{headset['name']} — battery {headset['battery']}%")
+            button.setTitle_(f" {headset['battery']}%" if headset["battery"] <= 30 else "")
+        else:
+            button.setToolTip_("OpenCapTune")
+            button.setTitle_("")
 
     @objc.python_method
     def _tick(self, menu, index, enabled=True):
@@ -280,21 +325,6 @@ class MenuBarController(NSObject):
         self.profile_menu.addItem_(NSMenuItem.separatorItem())
         save = self._add(self.profile_menu, "Save current as…", "saveProfile:")
         save.setEnabled_(self.status is not None)
-
-    @objc.python_method
-    def _fill_headset(self, entry):
-        """The headset's own amplifier gain.
-
-        A different thing from the equaliser's preamp: the preamp attenuates
-        digitally before the audio is transmitted, while this is an AVRCP
-        command the headset applies in its own amplifier at the far end.
-        """
-        self.headset_menu.removeAllItems()
-        if entry is None:
-            self._add(self.headset_menu, "No headset connected", None)
-            return
-        for percent in (100, 75, 50, 25):
-            self._add(self.headset_menu, f"{percent}%", "chooseHeadsetVolume:", tag=percent)
 
     @objc.python_method
     def _fill_outputs(self):
@@ -339,6 +369,71 @@ class MenuBarController(NSObject):
             return None
         return field.stringValue().strip() or None
 
+    @objc.python_method
+    def _send(self, key, value, action):
+        """Apply a slider change, skipping repeats while it is dragged."""
+        if self._last_sent.get(key) == value:
+            return
+        self._last_sent[key] = value
+        try:
+            action(value)
+        except Exception:  # noqa: BLE001 - dragging must not raise dialogs
+            pass
+
+    @objc.python_method
+    def _on_crossfeed(self, value):
+        self._send("crossfeed", int(round(value)), daemon.set_crossfeed)
+
+    @objc.python_method
+    def _on_loudness(self, value):
+        phon = None if value < LOUDNESS_OFF_BELOW else float(int(round(value)))
+        self._send("loudness", phon, daemon.set_loudness)
+
+    @objc.python_method
+    def _on_headset_volume(self, value):
+        from .hostapp import run_helper
+
+        name = getattr(self, "_headset_name", None)
+        if not name:
+            return
+        self._send(
+            "headset", int(round(value)),
+            lambda percent: run_helper(
+                {"action": "set_headset_volume", "name": name, "volume": percent / 100.0}
+            ),
+        )
+
+    # ---- menu lifecycle -------------------------------------------------
+
+    def menuWillOpen_(self, menu):
+        """Only measure the spectrum while someone is looking at it."""
+        try:
+            daemon.watch_spectrum(True)
+        except Exception:  # noqa: BLE001
+            pass
+        self._spectrum_timer = (
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                0.08, self, "pollSpectrum:", None, True
+            )
+        )
+
+    def menuDidClose_(self, menu):
+        if self._spectrum_timer is not None:
+            self._spectrum_timer.invalidate()
+            self._spectrum_timer = None
+        try:
+            daemon.watch_spectrum(False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def pollSpectrum_(self, timer):
+        try:
+            self._spectrum = daemon.spectrum().get("spectrum", [])
+        except Exception:  # noqa: BLE001 - the daemon may have stopped
+            self._spectrum = []
+        self.header.update(self.header.title, self.header.subtitle,
+                           self._spectrum, self.status is not None)
+
     @objc.IBAction
     def togglePower_(self, sender):
         def work():
@@ -364,21 +459,9 @@ class MenuBarController(NSObject):
         self._guard(lambda: daemon.set_calibration(None if tag < 0 else names[tag]))
 
     @objc.IBAction
-    def chooseCrossfeed_(self, sender):
-        self._guard(lambda: daemon.set_crossfeed(CROSSFEED_STEPS[sender.tag()]))
-
-    @objc.IBAction
-    def chooseLoudness_(self, sender):
-        self._guard(lambda: daemon.set_loudness(LOUDNESS_STEPS[sender.tag()]))
-
-    @objc.IBAction
     def chooseOutput_(self, sender):
         self.output_device = self._outputs[sender.tag()].name
         self.refresh_()
-
-    @objc.IBAction
-    def chooseHeadsetVolume_(self, sender):
-        from .hostapp import run_helper
 
         name = getattr(self, "_headset_name", None)
         if not name:

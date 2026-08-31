@@ -26,25 +26,26 @@ def test_every_menu_action_the_app_wires_up_actually_exists():
     from opencaptune import menubar
 
     for selector in ("togglePower_", "choosePreset_", "chooseCalibration_",
-                     "chooseCrossfeed_", "chooseLoudness_", "chooseOutput_",
-                     "quit_", "refresh_"):
+                     "chooseOutput_", "chooseProfile_", "saveProfile_",
+                     "toggleAutostart_", "toggleFollowDevice_", "openWindow_",
+                     "openSoundCheck_", "quit_", "refresh_",
+                     "menuWillOpen_", "menuDidClose_", "pollSpectrum_"):
         assert hasattr(menubar.MenuBarController, selector), selector
 
 
-def test_the_discrete_steps_are_valid_settings():
+def test_the_slider_ranges_are_valid_settings():
     from opencaptune import menubar
     from opencaptune.audio.crossfeed import Crossfeed
     from opencaptune.eq import loudness
 
-    for value in menubar.CROSSFEED_STEPS:
+    for value in (0, 50, 100):
         Crossfeed(strength=value, sample_rate=48000)
-    for value in menubar.LOUDNESS_STEPS:
-        if value is not None:
-            loudness.compensation(value)
+    # Anything at or above the cut-off must be a level the compensator accepts.
+    for value in (menubar.LOUDNESS_OFF_BELOW, 70.0, 90.0):
+        loudness.compensation(value)
 
 
-def test_loudness_labels_read_sensibly():
-    from opencaptune import menubar
+def test_the_custom_menu_views_build():
+    from opencaptune.menuviews import HeaderView, SliderRow
 
-    assert menubar._label_for_loudness(None) == "Off"
-    assert menubar._label_for_loudness(60.0) == "60 phon"
+    assert HeaderView is not None and SliderRow is not None

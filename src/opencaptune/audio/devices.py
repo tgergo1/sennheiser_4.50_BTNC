@@ -40,6 +40,17 @@ def devices() -> list[Device]:
     ]
 
 
+def default_output() -> Device:
+    """Whatever the Mac is currently playing to."""
+    import sounddevice  # noqa: PLC0415
+
+    entry = sounddevice.query_devices(kind="output")
+    for device in devices():
+        if device.name == entry["name"] and device.is_output:
+            return device
+    raise LookupError("no default output device")
+
+
 def resolve(wanted: str | int, kind: str) -> Device:
     """Find a device by index, exact name, or unambiguous partial name.
 

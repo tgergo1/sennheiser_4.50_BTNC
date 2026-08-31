@@ -19,6 +19,15 @@ def fixed_devices(monkeypatch):
     monkeypatch.setattr(devices_module, "devices", lambda: FIXTURE)
 
 
+def test_no_output_device_means_whatever_the_mac_is_playing_to(monkeypatch):
+    monkeypatch.setattr(devices_module, "default_output", lambda: FIXTURE[1])
+    import opencaptune.audio.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "default_output", lambda: FIXTURE[1])
+    engine = Engine(EngineConfig())
+    assert engine.output.name == "Bogcifüles"
+
+
 def test_the_output_device_is_resolved_by_name():
     engine = Engine(EngineConfig(output_device="Bogcifüles"))
     assert engine.output.name == "Bogcifüles"

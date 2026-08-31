@@ -88,9 +88,10 @@ captune profile list
 
 **Profiles → Save current as…** does the same from the menu bar.
 
-**Follow device** in the menu makes the equaliser start when that profile's
-output device appears and stop when it goes away, so plugging in the
-headphones is the only thing you have to do.
+**Start when … connects** in the menu names the device your applied profile
+plays to. Switch it on and the equaliser starts by itself when that device
+appears and stops when it goes away, so plugging in the headphones is the only
+thing you have to do.
 
 ```
 captune autostart enable          # and start the menu bar app at login
@@ -120,11 +121,15 @@ Save the result with **Profiles → Save current as…**.
 Everything the Mac plays goes through the filter — Spotify, YouTube, anything.
 
 ```
-captune eq start --output "YourHeadphones"
+captune eq start
 captune eq set Voice --bass 30     # change curve without interrupting playback
 captune eq status
 captune eq stop
 ```
+
+It plays to whatever your Mac is already playing to, so there is nothing to
+pick. `--output` overrides that if you want the equalised audio to come out
+somewhere else.
 
 No virtual audio device, no driver to install, and nothing to change in System
 Settings. A CoreAudio process tap asks the system directly for the audio it is
@@ -178,8 +183,7 @@ publishes the correction to the Harman over-ear target; it ships here.
 
 ```
 captune eq calibrations
-captune eq start --input "BlackHole 2ch" --output "YourHeadphones" \
-  --preset Neutral --calibration "HD 4.50 BTNC"
+captune eq start --preset Neutral --calibration "HD 4.50 BTNC"
 ```
 
 ### Any other headphones
@@ -273,7 +277,7 @@ available.
 | `captune eq loudness PHON\|off` | equal-loudness compensation for your listening level |
 | `captune eq show NAME [--bass N] [--treble N]` | display a curve |
 | `captune eq export NAME [--format apo\|json\|biquad]` | write a curve out |
-| `captune eq start --input DEV --output DEV` | start the always-on equaliser |
+| `captune eq start` | start the always-on equaliser |
 | `captune eq set NAME` / `stop` / `status` | control it while it runs |
 | `captune eq status --reset` | show it, then clear the counters |
 | `captune ui` | open the menu bar app |

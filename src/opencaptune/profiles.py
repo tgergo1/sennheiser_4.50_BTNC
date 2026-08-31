@@ -136,11 +136,6 @@ def to_config(value: Profile):
     """Turn a profile into the engine configuration it describes."""
     from .audio.engine import EngineConfig
 
-    if not value.output_device:
-        raise ValueError(
-            f"profile {value.name!r} has no output device; save it while the "
-            "equaliser is running, or set one explicitly"
-        )
     return EngineConfig(
         output_device=value.output_device,
         preset=value.preset,

@@ -91,6 +91,7 @@ def test_turning_a_profile_into_engine_configuration(store):
     assert config.output_device == "Headphones"
 
 
-def test_a_profile_with_no_device_cannot_be_applied(store):
-    with pytest.raises(ValueError, match="no output device"):
-        profiles.to_config(profiles.Profile(name="Music"))
+def test_a_profile_with_no_device_falls_back_to_the_current_output(store):
+    # There is nothing to configure any more: the engine plays to whatever the
+    # Mac is playing to unless a profile names something else.
+    assert profiles.to_config(profiles.Profile(name="Music")).output_device is None

@@ -26,7 +26,7 @@ def test_every_menu_action_the_app_wires_up_actually_exists():
     from opencaptune import menubar
 
     for selector in ("togglePower_", "choosePreset_", "chooseCalibration_",
-                     "chooseOutput_", "chooseProfile_", "saveProfile_",
+                     "chooseProfile_", "saveProfile_",
                      "toggleAutostart_", "toggleFollowDevice_", "openWindow_",
                      "openSoundCheck_", "quit_", "refresh_",
                      "menuWillOpen_", "menuDidClose_", "pollSpectrum_"):

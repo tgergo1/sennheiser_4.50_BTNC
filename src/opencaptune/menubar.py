@@ -51,11 +51,9 @@ class MenuBarController(NSObject):
         if self is None:
             return None
         self.status = None
-        self.output_device = None
         self._headset_name = None
         # Set before the first refresh: device enumeration can fail, and
         # togglePower_ reads this.
-        self._outputs = []
         self._profiles = []
         self._spectrum = []
         self._spectrum_timer = None
@@ -115,9 +113,9 @@ class MenuBarController(NSObject):
                                          symbol="ear")
         self.menu.addItem_(NSMenuItem.separatorItem())
 
-        self.output_menu = self._submenu("Output device", "hifispeaker")
         self.login_item = self._add(self.menu, "Start at login", "toggleAutostart:")
-        self.follow_item = self._add(self.menu, "Follow device", "toggleFollowDevice:")
+        self.follow_item = self._add(self.menu, "Start when headphones connect",
+                                     "toggleFollowDevice:")
         self.menu.addItem_(NSMenuItem.separatorItem())
         self._add(self.menu, "Quit", "quit:", symbol="power")
         self.item.setMenu_(self.menu)
@@ -208,7 +206,7 @@ class MenuBarController(NSObject):
             found = headset_info.connected_headsets()
         except Exception:  # noqa: BLE001
             return None
-        target = self.status["output"] if self.status else self.output_device
+        target = self.status["output"] if self.status else None
         entry = next((e for e in found if e["name"] == target), None) or (
             found[0] if found else None
         )
@@ -287,11 +285,24 @@ class MenuBarController(NSObject):
             (level or 0.0) * 100.0, enabled=headset is not None and level is not None)
 
         self._fill_profiles()
-        self._fill_outputs()
 
         from . import autostart
 
         self.login_item.setState_(1 if autostart.is_enabled() else 0)
+        # Name the device it will actually wait for, and say so when there is
+        # nothing for it to wait on.
+        auto = app_settings.get("auto_profile")
+        entry = profile_store.profiles().get(auto) if auto else None
+        device = entry.output_device if entry else None
+        self.follow_item.setTitle_(
+            f"Start when {device} connects" if device else "Start automatically"
+        )
+        self.follow_item.setEnabled_(device is not None)
+        self.follow_item.setToolTip_(
+            "Starts the equaliser when that device appears and stops when it goes away."
+            if device
+            else "Apply a profile first: this waits for that profile's output device."
+        )
         self.follow_item.setState_(1 if app_settings.get("follow_device") else 0)
         self.window_item.setEnabled_(running)
         self.soundcheck_item.setEnabled_(running)
@@ -325,22 +336,6 @@ class MenuBarController(NSObject):
         self.profile_menu.addItem_(NSMenuItem.separatorItem())
         save = self._add(self.profile_menu, "Save current as…", "saveProfile:")
         save.setEnabled_(self.status is not None)
-
-    @objc.python_method
-    def _fill_outputs(self):
-        from .audio.devices import devices
-
-        try:
-            outputs = [d for d in devices() if d.is_output]
-        except Exception:  # noqa: BLE001 - a menu must never take the app down
-            return
-        self.output_menu.removeAllItems()
-        chosen = self.output_device or (self.status["output"] if self.status else None)
-        for index, device in enumerate(outputs):
-            entry = self._add(self.output_menu, device.name, "chooseOutput:", tag=index)
-            entry.setState_(1 if device.name == chosen else 0)
-            entry.setEnabled_(self.status is None)
-        self._outputs = outputs
 
     # ---- actions --------------------------------------------------------
 
@@ -440,10 +435,7 @@ class MenuBarController(NSObject):
             if self.status is not None:
                 daemon.stop()
                 return
-            output = self.output_device or (self._outputs[0].name if self._outputs else None)
-            if output is None:
-                raise HostAppError("no output device is available")
-            daemon.start(EngineConfig(output_device=output))
+            daemon.start(EngineConfig())
 
         self._guard(work)
 
@@ -457,11 +449,6 @@ class MenuBarController(NSObject):
         names = list(equaliser.calibrations())
         tag = sender.tag()
         self._guard(lambda: daemon.set_calibration(None if tag < 0 else names[tag]))
-
-    @objc.IBAction
-    def chooseOutput_(self, sender):
-        self.output_device = self._outputs[sender.tag()].name
-        self.refresh_()
 
         name = getattr(self, "_headset_name", None)
         if not name:

@@ -19,13 +19,14 @@ from ..eq import loudness as loudness_module
 from .crossfeed import Crossfeed
 from . import tap as system_tap
 from . import volume as volume_control
-from .devices import Device, resolve
+from .devices import Device, default_output, resolve
 from .dsp import Equaliser
 
 
 @dataclass
 class EngineConfig:
-    output_device: str | int
+    #: None means whatever the Mac is currently playing to.
+    output_device: str | int | None = None
     preset: str = "Neutral"
     calibration: str | None = None
     loudness_phon: float | None = None
@@ -121,7 +122,11 @@ class Engine:
         # Only measured while something is displaying it.
         self._watching_spectrum = False
 
-        self.output = resolve(config.output_device, "output")
+        self.output = (
+            resolve(config.output_device, "output")
+            if config.output_device
+            else default_output()
+        )
 
         if not system_tap.available():
             raise ValueError(

@@ -271,7 +271,8 @@ def main(argv: list[str] | None = None) -> int:
     calibrate.add_argument("calibration", help="calibration name, or 'off'")
 
     start = eq_commands.add_parser("start", help="start the always-on equaliser")
-    start.add_argument("--output", required=True, help="device to play to, e.g. your headphones")
+    start.add_argument("--output", default=None,
+                       help="device to play to; defaults to whatever the Mac is playing to")
     start.add_argument("--preset", default="Neutral", help="preset to start with")
     start.add_argument("--calibration", default=None,
                        help="measured headphone correction to apply first, e.g. 'HD 4.50 BTNC'")

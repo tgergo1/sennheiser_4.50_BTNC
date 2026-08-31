@@ -28,7 +28,8 @@ class Profile:
     bass: int = 0
     treble: int = 0
     output_device: str | None = None
-    input_device: str = DEFAULT_INPUT
+    capture: str = "device"
+    input_device: str | None = DEFAULT_INPUT
 
     def validate(self) -> None:
         """Fail loudly at save time rather than quietly at apply time."""
@@ -119,7 +120,7 @@ def delete(name: str) -> bool:
     return True
 
 
-def from_status(name: str, status: dict, input_device: str = DEFAULT_INPUT) -> Profile:
+def from_status(name: str, status: dict, input_device: str | None = None) -> Profile:
     """Capture what the engine is doing right now as a named profile."""
     return Profile(
         name=name,
@@ -128,6 +129,7 @@ def from_status(name: str, status: dict, input_device: str = DEFAULT_INPUT) -> P
         crossfeed=int(status.get("crossfeed", 0)),
         loudness_phon=status.get("loudness_phon"),
         output_device=status.get("output"),
+        capture=status.get("capture", "device"),
         input_device=input_device,
     )
 
@@ -142,6 +144,7 @@ def to_config(value: Profile):
             "equaliser is running, or set one explicitly"
         )
     return EngineConfig(
+        capture=value.capture,
         input_device=value.input_device,
         output_device=value.output_device,
         preset=value.preset,

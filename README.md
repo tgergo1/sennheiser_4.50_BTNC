@@ -165,13 +165,28 @@ because macOS serves recording from whichever device is the *default* input,
 the equaliser moves that default off the headset while it runs and restores it
 on stop. `--no-manage-input` leaves it alone.
 
-**macOS will still show the microphone indicator**, and that part cannot be
-fixed from here. Reading the loopback device is audio input as far as the
-system is concerned, and it does not distinguish a virtual loopback from a
-real microphone. No microphone audio is captured — the equaliser only ever
-reads BlackHole. Process taps use a different permission and would remove the
-indicator entirely, which is one more reason they are worth finishing
-([docs/ROADMAP.md](docs/ROADMAP.md)).
+**macOS still shows the microphone indicator in the default mode.** Reading
+the loopback device is audio input as far as the system is concerned, and it
+does not distinguish a virtual loopback from a real microphone. No microphone
+audio is captured — the equaliser only ever reads BlackHole, and it now
+refuses to address the headset's microphone at all.
+
+The way out is to stop opening an input at all:
+
+```
+captune eq start --capture tap --output "YourHeadphones"
+```
+
+A CoreAudio process tap asks the system directly for the audio it is already
+playing. No virtual device, no output-device switching, and no microphone
+permission — it is gated by audio capture instead. It captures everything
+except this app, so its own output cannot feed back.
+
+**It is experimental.** Audio comes through correctly, but the stream reports
+a status flag on nearly every block, and only clocks at a 512 frame block
+size. Whether that is audible has not been established. Try it, and fall back
+to the default if it is not clean. [docs/ROADMAP.md](docs/ROADMAP.md) has the
+details.
 
 ### Volume
 

@@ -64,18 +64,30 @@ and allow a different curve per application.
   must be copied to a Python string immediately: keeping the wrapper alive
   makes PyObjC release a string it does not own, which crashes later.
 
-**What blocks it:** `AudioHardwareCreateAggregateDevice` segfaults
-(`EXC_BAD_ACCESS`), both through PyObjC's binding and through a direct `ctypes`
-call with the ABI declared by hand. The crash lands before the function
-executes, which points at how the `CFDictionary` describing the aggregate is
-marshalled rather than at the call itself.
+**The segfault is solved.** It was not a marshalling problem needing native
+code. PyObjC hands the aggregate dictionary key constants back as `bytes`, not
+`str`, so the description was built with keys of the wrong type and CoreAudio
+dereferenced something that was not a string. One `.decode()` per key fixes it,
+and the aggregate now builds: status 0, with the tap on its input side and the
+real output device on its output. `opencaptune.audio.tap` implements it.
 
-**What would fix it:** a small Swift or Objective-C helper that builds the tap
-and the aggregate and returns the resulting device, with Python driving it. The
-audio path afterwards is unchanged — the aggregate simply appears as an input
-device where BlackHole is today. That is perhaps 100 lines of Swift and a build
-step, which is why it has not been done here yet rather than because it is
-uncertain.
+**The silence is solved too.** A tap created without
+`NSAudioCaptureUsageDescription` in the bundle's Info.plist is created happily
+and then delivers nothing at all — no error, no prompt, just zeros. With the
+key present, captured audio matches the source exactly.
+
+**What still blocks it as the default:** the duplex stream on the tap
+aggregate reports a PortAudio status flag on essentially every block — 259 in
+259 blocks — identically whether audio is playing or the system is silent. The
+captured samples are exact, which suggests a persistent flag rather than real
+dropouts, but it has not been confirmed by listening. Larger block sizes are
+worse, not better: at 1024 and 2048 the callback never fires at all, so the
+aggregate appears to clock only at 512.
+
+So `--capture tap` exists and works, and the default remains the BlackHole
+loopback until the clocking is understood. Getting there is what removes the
+virtual device install, the output-device switching, *and* the microphone
+indicator in one go.
 
 ### 5. Real loudness compensation — **done**
 

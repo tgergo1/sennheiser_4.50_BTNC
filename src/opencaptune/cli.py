@@ -168,7 +168,8 @@ def _print_status(report: dict) -> None:
     if raised is not None:
         print(f"  volume      output device raised to full from {raised:.0%} "
               f"(restored on stop)")
-    print(f"  routing     {report['input']} -> {report['output']}")
+    how = "system audio (process tap)" if report.get("capture") == "tap" else report["input"]
+    print(f"  routing     {how} -> {report['output']}")
     print(f"  format      {report['sample_rate']} Hz, {report['channels']} ch, "
           f"{report['block_size']} frame blocks (~{report['latency_ms']} ms)")
     hours = report["frames"] / report["sample_rate"] / 3600
@@ -274,8 +275,12 @@ def main(argv: list[str] | None = None) -> int:
     calibrate.add_argument("calibration", help="calibration name, or 'off'")
 
     start = eq_commands.add_parser("start", help="start the always-on equaliser")
+    start.add_argument("--capture", default="device", choices=("auto", "tap", "device"),
+                       help="device: read a loopback such as BlackHole (default); "
+                            "tap: capture system audio directly, no virtual device and no "
+                            "microphone permission, but still experimental")
     start.add_argument("--input", default="BlackHole",
-                       help="device to read from, normally a virtual output device")
+                       help="loopback device to read from, for --capture device")
     start.add_argument("--output", required=True, help="device to play to, e.g. your headphones")
     start.add_argument("--preset", default="Neutral", help="preset to start with")
     start.add_argument("--calibration", default=None,
@@ -346,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
 
                 report = daemon.start(
                     EngineConfig(
+                        capture=arguments.capture,
                         input_device=arguments.input,
                         output_device=arguments.output,
                         preset=arguments.preset,

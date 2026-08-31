@@ -15,6 +15,7 @@ import numpy as np
 from .. import eq
 from ..eq import loudness as loudness_module
 from .crossfeed import Crossfeed
+from . import tap as system_tap
 from . import volume as volume_control
 from .devices import Device, resolve
 from .dsp import Equaliser
@@ -22,8 +23,13 @@ from .dsp import Equaliser
 
 @dataclass
 class EngineConfig:
-    input_device: str | int
     output_device: str | int
+    #: "device" reads a loopback such as BlackHole — proven, and the default.
+    #: "tap" captures system audio directly with a CoreAudio process tap, which
+    #: needs no virtual device and no microphone permission, but is not yet
+    #: reliable: see docs/ROADMAP.md.
+    capture: str = "device"
+    input_device: str | int | None = None
     preset: str = "Neutral"
     calibration: str | None = None
     loudness_phon: float | None = None
@@ -68,26 +74,41 @@ class Engine:
         # Only measured while something is displaying it.
         self._watching_spectrum = False
 
-        self.input = resolve(config.input_device, "input")
         self.output = resolve(config.output_device, "output")
-        if self.input.index == self.output.index:
-            raise ValueError(
-                f"input and output are the same device ({self.input.name!r}); "
-                "the point of the loop is that they differ"
-            )
 
-        # Never capture from a headset's own microphone: opening it forces the
-        # headset out of A2DP and into hands-free mode, which is mono, narrow
-        # band, and turns the microphone on. We only ever need the loopback.
-        if self.input.name == self.output.name:
-            raise ValueError(
-                f"{self.input.name!r} is the headset's own microphone. Capturing "
-                "from it would switch the headset into call mode. Use a virtual "
-                "loopback device such as BlackHole as the input."
-            )
+        self.capture_mode = config.capture
+        if self.capture_mode == "auto":
+            self.capture_mode = "tap" if system_tap.available() else "device"
+        if self.capture_mode == "tap" and not system_tap.available():
+            raise ValueError("process taps need macOS 14.2 or later")
+        if self.capture_mode not in ("tap", "device"):
+            raise ValueError(f"unknown capture mode {config.capture!r}")
+
+        self.input = None
+        if self.capture_mode == "device":
+            if not config.input_device:
+                raise ValueError("device capture needs an input device, e.g. 'BlackHole 2ch'")
+            self.input = resolve(config.input_device, "input")
+            if self.input.index == self.output.index:
+                raise ValueError(
+                    f"input and output are the same device ({self.input.name!r}); "
+                    "the point of the loop is that they differ"
+                )
+            # Never capture from a headset's own microphone: opening it forces
+            # the headset out of A2DP into hands-free mode — mono, narrow band,
+            # microphone live. We only ever need the loopback.
+            if self.input.name == self.output.name:
+                raise ValueError(
+                    f"{self.input.name!r} is the headset's own microphone. Capturing "
+                    "from it would switch the headset into call mode. Use a virtual "
+                    "loopback device such as BlackHole as the input."
+                )
 
         self.sample_rate = int(config.sample_rate or self.output.default_sample_rate)
-        self.channels = min(config.channels, self.input.input_channels, self.output.output_channels)
+        self.channels = min(config.channels, self.output.output_channels)
+        if self.input is not None:
+            self.channels = min(self.channels, self.input.input_channels)
+        self._capture = None
         if self.channels < 1:
             raise ValueError("the chosen devices have no usable channels in common")
 
@@ -294,35 +315,89 @@ class Engine:
             pass
         self._restore_volume = None
 
+    def _open_tap(self):
+        """Create the tap device and return the index PortAudio knows it by."""
+        import time  # noqa: PLC0415
+
+        import sounddevice  # noqa: PLC0415
+
+        device = volume_control.find_output_device(self.output.name)
+        if device is None:
+            raise system_tap.TapError(
+                f"could not find {self.output.name!r} in CoreAudio to tap alongside"
+            )
+        capture = system_tap.SystemCapture(device)
+        capture.open()
+        self._capture = capture
+
+        try:
+            # PortAudio enumerates devices when it initialises, and the
+            # aggregate did not exist then. Re-initialise so that it appears —
+            # and give CoreAudio a moment, because publishing a new device is
+            # not instantaneous and the first look can miss it.
+            for attempt in range(10):
+                sounddevice._terminate()
+                sounddevice._initialize()
+                for index, entry in enumerate(sounddevice.query_devices()):
+                    if entry["name"] == capture.name and entry["max_input_channels"] > 0:
+                        return index
+                time.sleep(0.15)
+            raise system_tap.TapError("the capture device did not appear to the audio layer")
+        except Exception:
+            # Leaving the aggregate behind would leave a stray device in the
+            # system's list and block the next attempt.
+            self._close_capture()
+            raise
+
     def start(self) -> None:
         import sounddevice  # noqa: PLC0415
 
         if self.running:
             return
         self._take_output_volume()
-        self._steer_default_input_away()
-        self._stream = sounddevice.Stream(
-            device=(self.input.index, self.output.index),
-            samplerate=self.sample_rate,
-            blocksize=self.config.block_size,
-            channels=self.channels,
-            dtype="float32",
-            callback=self._callback,
-        )
-        self._stream.start()
+
+        if self.capture_mode == "tap":
+            index = self._open_tap()
+            devices = (index, index)
+        else:
+            # Reading a loopback counts as recording, and macOS serves that
+            # from the default input — which must therefore not be the headset.
+            self._steer_default_input_away()
+            devices = (self.input.index, self.output.index)
+
+        try:
+            self._stream = sounddevice.Stream(
+                device=devices,
+                samplerate=self.sample_rate,
+                blocksize=self.config.block_size,
+                channels=self.channels,
+                dtype="float32",
+                callback=self._callback,
+            )
+            self._stream.start()
+        except Exception:
+            self._close_capture()
+            raise
 
     def stop(self) -> None:
         if self._stream is not None:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+        self._close_capture()
         self._give_output_volume_back()
         self._give_default_input_back()
+
+    def _close_capture(self) -> None:
+        if self._capture is not None:
+            self._capture.close()
+            self._capture = None
 
     def status(self) -> dict:
         return {
             "running": self.running,
-            "input": self.input.name,
+            "capture": self.capture_mode,
+            "input": self.input.name if self.input else system_tap.AGGREGATE_NAME,
             "output": self.output.name,
             "sample_rate": self.sample_rate,
             "channels": self.channels,

@@ -40,6 +40,12 @@ MICROPHONE_USAGE = (
     "OpenCapTune reads the audio you are playing so it can equalise it before "
     "it reaches your headphones."
 )
+# Process taps capture what the machine is playing, which macOS gates
+# separately from the microphone.
+AUDIO_CAPTURE_USAGE = (
+    "OpenCapTune captures the audio your Mac is playing so it can equalise it "
+    "before it reaches your headphones. It does not record the microphone."
+)
 
 
 class HostAppError(RuntimeError):
@@ -85,6 +91,8 @@ def _info_plist() -> dict:
         "NSBluetoothAlwaysUsageDescription": BLUETOOTH_USAGE,
         "NSBluetoothPeripheralUsageDescription": BLUETOOTH_USAGE,
         "NSMicrophoneUsageDescription": MICROPHONE_USAGE,
+        "NSAudioCaptureUsageDescription": AUDIO_CAPTURE_USAGE,
+        "NSSystemAudioCaptureUsageDescription": AUDIO_CAPTURE_USAGE,
     }
 
 

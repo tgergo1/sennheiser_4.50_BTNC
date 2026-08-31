@@ -28,7 +28,7 @@ class Profile:
     bass: int = 0
     treble: int = 0
     output_device: str | None = None
-    capture: str = "device"
+    capture: str = "auto"
     input_device: str | None = DEFAULT_INPUT
 
     def validate(self) -> None:
@@ -129,7 +129,7 @@ def from_status(name: str, status: dict, input_device: str | None = None) -> Pro
         crossfeed=int(status.get("crossfeed", 0)),
         loudness_phon=status.get("loudness_phon"),
         output_device=status.get("output"),
-        capture=status.get("capture", "device"),
+        capture=status.get("capture", "auto"),
         input_device=input_device,
     )
 

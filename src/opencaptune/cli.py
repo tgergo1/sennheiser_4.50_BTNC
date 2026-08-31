@@ -275,10 +275,10 @@ def main(argv: list[str] | None = None) -> int:
     calibrate.add_argument("calibration", help="calibration name, or 'off'")
 
     start = eq_commands.add_parser("start", help="start the always-on equaliser")
-    start.add_argument("--capture", default="device", choices=("auto", "tap", "device"),
-                       help="device: read a loopback such as BlackHole (default); "
-                            "tap: capture system audio directly, no virtual device and no "
-                            "microphone permission, but still experimental")
+    start.add_argument("--capture", default="auto", choices=("auto", "tap", "device"),
+                       help="tap: capture system audio directly, needing no virtual device "
+                            "(macOS 14.2+, the default where available); "
+                            "device: read a loopback such as BlackHole")
     start.add_argument("--input", default="BlackHole",
                        help="loopback device to read from, for --capture device")
     start.add_argument("--output", required=True, help="device to play to, e.g. your headphones")

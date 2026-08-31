@@ -24,11 +24,10 @@ from .dsp import Equaliser
 @dataclass
 class EngineConfig:
     output_device: str | int
-    #: "device" reads a loopback such as BlackHole — proven, and the default.
-    #: "tap" captures system audio directly with a CoreAudio process tap, which
-    #: needs no virtual device and no microphone permission, but is not yet
-    #: reliable: see docs/ROADMAP.md.
-    capture: str = "device"
+    #: "tap" captures system audio directly with a CoreAudio process tap: no
+    #: virtual device, no output-device switching. "device" reads a loopback
+    #: such as BlackHole. "auto" takes the tap where the OS supports it.
+    capture: str = "auto"
     input_device: str | int | None = None
     preset: str = "Neutral"
     calibration: str | None = None
@@ -48,6 +47,61 @@ class EngineConfig:
         return asdict(self)
 
 
+class _Ring:
+    """A small circular buffer bridging the capture and playback callbacks.
+
+    The tap and the headphones are separate devices, so they run on separate
+    clocks even when both are nominally at the same rate. This absorbs the
+    jitter between them, drops the oldest audio if playback falls behind, and
+    plays silence rather than stale audio if it gets ahead.
+    """
+
+    def __init__(self, frames: int, channels: int) -> None:
+        self._buffer = np.zeros((frames, channels), dtype=np.float32)
+        self._size = frames
+        self._read = 0
+        self._write = 0
+        self._count = 0
+        self._lock = threading.Lock()
+        self.dropped = 0
+        self.starved = 0
+
+    @property
+    def filled(self) -> int:
+        with self._lock:
+            return self._count
+
+    def write(self, block: np.ndarray) -> None:
+        frames = len(block)
+        with self._lock:
+            spare = self._size - self._count
+            if frames > spare:
+                discard = frames - spare
+                self._read = (self._read + discard) % self._size
+                self._count -= discard
+                self.dropped += discard
+            first = min(frames, self._size - self._write)
+            self._buffer[self._write : self._write + first] = block[:first]
+            if first < frames:
+                self._buffer[: frames - first] = block[first:]
+            self._write = (self._write + frames) % self._size
+            self._count += frames
+
+    def read(self, frames: int) -> np.ndarray:
+        out = np.zeros((frames, self._buffer.shape[1]), dtype=np.float32)
+        with self._lock:
+            available = min(frames, self._count)
+            if available < frames:
+                self.starved += frames - available
+            first = min(available, self._size - self._read)
+            out[:first] = self._buffer[self._read : self._read + first]
+            if first < available:
+                out[first:available] = self._buffer[: available - first]
+            self._read = (self._read + available) % self._size
+            self._count -= available
+        return out
+
+
 @dataclass
 class Stats:
     frames: int = 0
@@ -62,6 +116,8 @@ class Engine:
         self.config = config
         self.stats = Stats()
         self._stream = None
+        self._input_stream = None
+        self._ring = None
         self._lock = threading.Lock()
         self._restore_volume: tuple[int, float] | None = None
         # Held by name, not by id: CoreAudio reassigns device ids when a
@@ -321,12 +377,9 @@ class Engine:
 
         import sounddevice  # noqa: PLC0415
 
-        device = volume_control.find_output_device(self.output.name)
-        if device is None:
-            raise system_tap.TapError(
-                f"could not find {self.output.name!r} in CoreAudio to tap alongside"
-            )
-        capture = system_tap.SystemCapture(device)
+        # Matched to the output's rate so nothing has to be resampled between
+        # the two devices.
+        capture = system_tap.SystemCapture(sample_rate=float(self.sample_rate))
         capture.open()
         self._capture = capture
 
@@ -349,6 +402,60 @@ class Engine:
             self._close_capture()
             raise
 
+    def _start_tap_streams(self) -> None:
+        """Capture and playback as two independent streams.
+
+        One duplex stream across a device holding both the tap and a Bluetooth
+        output reports a late block almost every time: two clock domains, one
+        of them jittery. Kept apart, each side runs exactly on time and a ring
+        buffer takes up the difference.
+        """
+        import sounddevice  # noqa: PLC0415
+
+        index = self._open_tap()
+        block = self.config.block_size
+        self._ring = _Ring(block * 8, self.channels)
+        try:
+            self._input_stream = sounddevice.InputStream(
+                device=index,
+                samplerate=self.sample_rate,
+                blocksize=block,
+                channels=self.channels,
+                dtype="float32",
+                callback=self._capture_callback,
+            )
+            self._stream = sounddevice.OutputStream(
+                device=self.output.index,
+                samplerate=self.sample_rate,
+                blocksize=block,
+                channels=self.channels,
+                dtype="float32",
+                callback=self._playback_callback,
+            )
+            self._stream.start()
+            self._input_stream.start()
+        except Exception:
+            self.stop()
+            raise
+
+    def _capture_callback(self, indata, frames, time_info, status) -> None:
+        if status:
+            self.stats.glitches += 1
+        with self._lock:
+            filtered = self._equaliser.process(self._crossfeed.process(indata))
+            if self._watching_spectrum and frames:
+                self._measure_spectrum(filtered)
+        self._ring.write(filtered)
+        self.stats.frames += frames
+        peak = float(abs(filtered).max()) if frames else 0.0
+        if peak > self.stats.peak:
+            self.stats.peak = peak
+
+    def _playback_callback(self, outdata, frames, time_info, status) -> None:
+        if status:
+            self.stats.glitches += 1
+        outdata[:] = self._ring.read(frames)
+
     def start(self) -> None:
         import sounddevice  # noqa: PLC0415
 
@@ -357,8 +464,9 @@ class Engine:
         self._take_output_volume()
 
         if self.capture_mode == "tap":
-            index = self._open_tap()
-            devices = (index, index)
+            self._start_tap_streams()
+            return
+
         else:
             # Reading a loopback counts as recording, and macOS serves that
             # from the default input — which must therefore not be the headset.
@@ -380,10 +488,13 @@ class Engine:
             raise
 
     def stop(self) -> None:
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+        for attribute in ("_input_stream", "_stream"):
+            stream = getattr(self, attribute, None)
+            if stream is not None:
+                stream.stop()
+                stream.close()
+                setattr(self, attribute, None)
+        self._ring = None
         self._close_capture()
         self._give_output_volume_back()
         self._give_default_input_back()
@@ -418,4 +529,6 @@ class Engine:
             "frames": self.stats.frames,
             "glitches": self.stats.glitches,
             "peak": round(self.stats.peak, 4),
+            "dropped": self._ring.dropped if self._ring else 0,
+            "starved": self._ring.starved if self._ring else 0,
         }

@@ -112,81 +112,50 @@ Save the result with **Profiles → Save current as…**.
 
 ## System-wide equaliser
 
-CapTune could only equalise music it played itself. This does better: with a
-virtual output device in front of it, everything on the Mac goes through the
-filter — Spotify, YouTube, anything.
-
-Install the virtual device once (this asks for your password, and macOS will
-ask you to allow the driver in System Settings → Privacy & Security):
+Everything the Mac plays goes through the filter — Spotify, YouTube, anything.
 
 ```
-brew install blackhole-2ch
-```
-
-Then send the Mac's audio into it and run the equaliser from it to your
-headphones:
-
-```
-captune audio devices
-captune eq start --input "BlackHole 2ch" --output "YourHeadphones" --preset Rock
-```
-
-Set the Mac's **output device to BlackHole 2ch** (System Settings → Sound). Audio
-now flows: apps → BlackHole → OpenCapTune → headphones.
-
-```
+captune eq start --output "YourHeadphones"
 captune eq set Voice --bass 30     # change curve without interrupting playback
 captune eq status
 captune eq stop
 ```
 
-Switching preset crossfades over 20 ms rather than swapping filters outright,
-which would step the output — audibly, since presets carry different preamps.
-The two filters run side by side for the fade and are mixed linearly. Measured
-on hardware, the step at a switch drops by about three orders of magnitude and
-the output never exceeds the louder of the two presets.
+No virtual audio device, no driver to install, and nothing to change in System
+Settings. A CoreAudio process tap asks the system directly for the audio it is
+already playing, muted at the far end so you hear only the equalised copy. The
+tap excludes this app, so its own output cannot be captured and fed back round.
 
-**Latency** is about 11 ms at the default 512-frame block, on top of Bluetooth's
-own. Fine for music, noticeable for video; `--block-size 256` halves it at some
-risk of glitches, which `captune eq status` counts. Those counters — frames,
-glitches and peak — accumulate since the last reset, and `peak` is a running
-maximum, so use `captune eq status --reset` before measuring anything.
+Requires macOS 14.2 or later. Without it, `captune` falls back to reading a
+loopback device — see below.
+
+**Latency** is about 12 ms at the default 512-frame block, on top of
+Bluetooth's own. `captune eq status` counts anything that goes wrong: blocks
+that arrived late, audio dropped because playback fell behind, and silence
+played because it got ahead.
 
 ### The microphone
 
-The headset shows up on macOS twice: as an A2DP output and as a hands-free
-microphone. Opening that microphone drags the headset out of A2DP and into
-call mode — mono, narrow band, microphone live — which is not something an
-equaliser should ever do.
+The tap is not a microphone and macOS does not treat it as one. It is gated by
+audio capture permission instead, and the equaliser never opens an input device
+of any kind.
 
-Two measures keep it out of that state. Capturing from the headset's own
-microphone is refused outright, with an error rather than a silent switch. And
-because macOS serves recording from whichever device is the *default* input,
-the equaliser moves that default off the headset while it runs and restores it
-on stop. `--no-manage-input` leaves it alone.
+That was not true of the older loopback mode, and could not be made true:
+reading a virtual device is audio input as far as macOS is concerned, so the
+microphone indicator lit up however virtual the device was. Removing it is most
+of why the tap exists.
 
-**macOS still shows the microphone indicator in the default mode.** Reading
-the loopback device is audio input as far as the system is concerned, and it
-does not distinguish a virtual loopback from a real microphone. No microphone
-audio is captured — the equaliser only ever reads BlackHole, and it now
-refuses to address the headset's microphone at all.
-
-The way out is to stop opening an input at all:
+### If your Mac is older than 14.2
 
 ```
-captune eq start --capture tap --output "YourHeadphones"
+brew install blackhole-2ch
+captune eq start --capture device --input "BlackHole 2ch" --output "YourHeadphones"
 ```
 
-A CoreAudio process tap asks the system directly for the audio it is already
-playing. No virtual device, no output-device switching, and no microphone
-permission — it is gated by audio capture instead. It captures everything
-except this app, so its own output cannot feed back.
-
-**It is experimental.** Audio comes through correctly, but the stream reports
-a status flag on nearly every block, and only clocks at a 512 frame block
-size. Whether that is audible has not been established. Try it, and fall back
-to the default if it is not clean. [docs/ROADMAP.md](docs/ROADMAP.md) has the
-details.
+Then set the system output to **BlackHole 2ch**, so audio flows apps →
+BlackHole → OpenCapTune → headphones, and set it back when you stop. This mode
+does show the microphone indicator, and the equaliser moves the default input
+off the headset while it runs so the headset is not pulled into call mode.
 
 ### Volume
 

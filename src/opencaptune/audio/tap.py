@@ -123,8 +123,17 @@ class SystemCapture:
     manager.
     """
 
-    def __init__(self, output_device: int, mute_original: bool = True) -> None:
-        self.output_device = output_device
+    def __init__(
+        self,
+        output_device: int | None = None,
+        mute_original: bool = True,
+        sample_rate: float | None = None,
+    ) -> None:
+        # A tap-only aggregate: combining the tap and a Bluetooth output in one
+        # aggregate and running duplex across it makes nearly every block
+        # arrive late, because they are separate clock domains and the
+        # Bluetooth side is jittery. As a pure input it is exact.
+        self.sample_rate = sample_rate
         self.mute_original = mute_original
         self.tap = None
         self.aggregate = None
@@ -141,10 +150,6 @@ class SystemCapture:
         CoreAudio = _core_audio()
         if not available():
             raise TapError("process taps need macOS 14.2 or later")
-
-        uid = device_uid(self.output_device)
-        if not uid:
-            raise TapError("the output device has no UID to build an aggregate around")
 
         description = CoreAudio.CATapDescription.alloc().initStereoGlobalTapButExcludeProcesses_(
             [_own_process_object()]
@@ -169,19 +174,8 @@ class SystemCapture:
             _key(CoreAudio.kAudioAggregateDeviceIsPrivateKey): 1,
             _key(CoreAudio.kAudioAggregateDeviceIsStackedKey): 0,
             _key(CoreAudio.kAudioAggregateDeviceTapAutoStartKey): 1,
-            _key(CoreAudio.kAudioAggregateDeviceMainSubDeviceKey): uid,
-            _key(CoreAudio.kAudioAggregateDeviceSubDeviceListKey): [
-                {_key(CoreAudio.kAudioSubDeviceUIDKey): uid}
-            ],
-            # The tap runs on the system's clock and the headphones on their
-            # own, so the aggregate has two clock domains. Without drift
-            # compensation on the tap the two slide apart and nearly every
-            # block arrives late.
             _key(CoreAudio.kAudioAggregateDeviceTapListKey): [
-                {
-                    _key(CoreAudio.kAudioSubTapUIDKey): tap_uid,
-                    _key(CoreAudio.kAudioSubTapDriftCompensationKey): 1,
-                }
+                {_key(CoreAudio.kAudioSubTapUIDKey): tap_uid}
             ],
         }
         status, aggregate = CoreAudio.AudioHardwareCreateAggregateDevice(configuration, None)
@@ -189,6 +183,24 @@ class SystemCapture:
             self.close()
             raise TapError(f"could not create the capture device (status {status})")
         self.aggregate = aggregate
+        if self.sample_rate:
+            self._match_sample_rate(self.sample_rate)
+
+    def _match_sample_rate(self, rate: float) -> bool:
+        """Ask the tap device to run at the output's rate, to avoid resampling."""
+        CoreAudio = _core_audio()
+        address = _address(CoreAudio.kAudioDevicePropertyNominalSampleRate)
+        status = CoreAudio.AudioObjectSetPropertyData(
+            self.aggregate, address, 0, b"", 8, struct.pack("d", float(rate))
+        )
+        return status == 0
+
+    def nominal_sample_rate(self) -> float | None:
+        CoreAudio = _core_audio()
+        status, blob = _read(
+            self.aggregate, _address(CoreAudio.kAudioDevicePropertyNominalSampleRate), 8
+        )
+        return struct.unpack("d", blob)[0] if status == 0 else None
 
     def close(self) -> None:
         CoreAudio = _core_audio()

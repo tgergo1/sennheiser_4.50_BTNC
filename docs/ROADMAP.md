@@ -44,7 +44,7 @@ Crossfeed mixes a delayed, low-passed copy of each channel into the other.
 Bauer and Meier designs are well documented and are a handful of biquads plus a
 delay line — it fits the existing engine directly.
 
-### 4. Per-application equalisation — *attempted; blocked on one call*
+### 4. System audio capture without a virtual device — **done**
 
 macOS 14.2+ has CoreAudio process taps, which would remove BlackHole entirely
 and allow a different curve per application.
@@ -76,18 +76,22 @@ real output device on its output. `opencaptune.audio.tap` implements it.
 and then delivers nothing at all — no error, no prompt, just zeros. With the
 key present, captured audio matches the source exactly.
 
-**What still blocks it as the default:** the duplex stream on the tap
-aggregate reports a PortAudio status flag on essentially every block — 259 in
-259 blocks — identically whether audio is playing or the system is silent. The
-captured samples are exact, which suggests a persistent flag rather than real
-dropouts, but it has not been confirmed by listening. Larger block sizes are
-worse, not better: at 1024 and 2048 the callback never fires at all, so the
-aggregate appears to clock only at 512.
+**The glitching is solved too, and the cause was the shape of the device.**
+The first design put the tap *and* the headphones in one aggregate and ran a
+duplex stream across it. That reported a late block almost every time — 259 in
+259 — because an aggregate spanning a system-clocked tap and a jittery
+Bluetooth output has two clock domains, and drift compensation did not rescue
+it. Larger blocks made it worse: at 1024 and 2048 the callback never fired.
 
-So `--capture tap` exists and works, and the default remains the BlackHole
-loopback until the clocking is understood. Getting there is what removes the
-virtual device install, the output-device switching, *and* the microphone
-indicator in one go.
+Splitting them fixes it completely. The tap gets an aggregate of its own and is
+opened as a pure input; the headphones are opened as an ordinary output; a
+small ring buffer takes up the difference. Measured over three seconds, idle
+and playing: **258 blocks, zero late, zero dropped, zero starved**, with
+captured audio exact. Setting the tap aggregate's nominal rate to the output's
+avoids resampling between them.
+
+This is now the default. Per-application curves are the remaining prize — the
+tap already knows which process each stream belongs to.
 
 ### 5. Real loudness compensation — **done**
 

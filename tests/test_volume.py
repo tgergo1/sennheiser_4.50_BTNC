@@ -63,10 +63,3 @@ def test_reading_averages_the_channels_when_there_is_no_master(monkeypatch):
 def test_a_device_with_no_volume_at_all_reads_as_none(monkeypatch):
     monkeypatch.setattr(volume, "_read_float", lambda d, e: None)
     assert volume.get_volume(7) is None
-
-
-def test_input_devices_are_found_by_name(monkeypatch):
-    monkeypatch.setattr(volume, "input_devices",
-                        lambda: [(1, "MacBook Pro Microphone"), (2, "Bogcifüles")])
-    assert volume.find_input_device("Bogcifüles") == 2
-    assert volume.find_input_device("Not Connected") is None

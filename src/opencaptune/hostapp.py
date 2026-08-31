@@ -34,14 +34,9 @@ BLUETOOTH_USAGE = (
     "OpenCapTune talks to your Sennheiser headphones over Bluetooth to read "
     "their capabilities and settings."
 )
-# Reading from a virtual output device such as BlackHole counts as microphone
-# input as far as macOS is concerned, so the equaliser needs this too.
-MICROPHONE_USAGE = (
-    "OpenCapTune reads the audio you are playing so it can equalise it before "
-    "it reaches your headphones."
-)
-# Process taps capture what the machine is playing, which macOS gates
-# separately from the microphone.
+# Capturing what the machine is playing is gated separately from the
+# microphone, and the equaliser never opens a microphone, so it asks for no
+# microphone permission at all.
 AUDIO_CAPTURE_USAGE = (
     "OpenCapTune captures the audio your Mac is playing so it can equalise it "
     "before it reaches your headphones. It does not record the microphone."
@@ -90,7 +85,6 @@ def _info_plist() -> dict:
         "LSUIElement": True,
         "NSBluetoothAlwaysUsageDescription": BLUETOOTH_USAGE,
         "NSBluetoothPeripheralUsageDescription": BLUETOOTH_USAGE,
-        "NSMicrophoneUsageDescription": MICROPHONE_USAGE,
         "NSAudioCaptureUsageDescription": AUDIO_CAPTURE_USAGE,
         "NSSystemAudioCaptureUsageDescription": AUDIO_CAPTURE_USAGE,
     }

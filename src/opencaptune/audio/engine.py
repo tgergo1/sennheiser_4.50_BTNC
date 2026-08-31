@@ -1,13 +1,15 @@
-"""The always-on equaliser: read one device, filter, write another.
+"""The always-on equaliser.
 
-Paired with a virtual output device such as BlackHole this gives system-wide
-equalisation.  macOS plays into the virtual device, this reads from it, and the
-filtered result goes to the headphones.
+Captures what the machine is already playing with a CoreAudio process tap,
+filters it, and plays the result to the headphones. Nothing has to be installed
+and nothing has to be reconfigured: the system output stays where it is, the
+tap intercepts it muted, and only the equalised copy is heard.
 """
 
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
@@ -24,18 +26,12 @@ from .dsp import Equaliser
 @dataclass
 class EngineConfig:
     output_device: str | int
-    #: "tap" captures system audio directly with a CoreAudio process tap: no
-    #: virtual device, no output-device switching. "device" reads a loopback
-    #: such as BlackHole. "auto" takes the tap where the OS supports it.
-    capture: str = "auto"
-    input_device: str | int | None = None
     preset: str = "Neutral"
     calibration: str | None = None
     loudness_phon: float | None = None
     reference_phon: float = loudness_module.DEFAULT_REFERENCE_PHON
     crossfeed: int = 0
     manage_volume: bool = True
-    manage_input: bool = True
     bass: int = 0
     treble: int = 0
     sample_rate: int | None = None
@@ -120,11 +116,6 @@ class Engine:
         self._ring = None
         self._lock = threading.Lock()
         self._restore_volume: tuple[int, float] | None = None
-        # Held by name, not by id: CoreAudio reassigns device ids when a
-        # device re-enumerates, and a Bluetooth headset does that whenever it
-        # reconnects. Restoring a stale id would point the default input at
-        # whatever inherited the number.
-        self._restore_input: str | None = None
         self._spectrum = np.full(len(eq.bands()), -90.0)
         self._bins = None
         # Only measured while something is displaying it.
@@ -132,38 +123,12 @@ class Engine:
 
         self.output = resolve(config.output_device, "output")
 
-        self.capture_mode = config.capture
-        if self.capture_mode == "auto":
-            self.capture_mode = "tap" if system_tap.available() else "device"
-        if self.capture_mode == "tap" and not system_tap.available():
-            raise ValueError("process taps need macOS 14.2 or later")
-        if self.capture_mode not in ("tap", "device"):
-            raise ValueError(f"unknown capture mode {config.capture!r}")
-
-        self.input = None
-        if self.capture_mode == "device":
-            if not config.input_device:
-                raise ValueError("device capture needs an input device, e.g. 'BlackHole 2ch'")
-            self.input = resolve(config.input_device, "input")
-            if self.input.index == self.output.index:
-                raise ValueError(
-                    f"input and output are the same device ({self.input.name!r}); "
-                    "the point of the loop is that they differ"
-                )
-            # Never capture from a headset's own microphone: opening it forces
-            # the headset out of A2DP into hands-free mode — mono, narrow band,
-            # microphone live. We only ever need the loopback.
-            if self.input.name == self.output.name:
-                raise ValueError(
-                    f"{self.input.name!r} is the headset's own microphone. Capturing "
-                    "from it would switch the headset into call mode. Use a virtual "
-                    "loopback device such as BlackHole as the input."
-                )
-
+        if not system_tap.available():
+            raise ValueError(
+                "capturing system audio needs macOS 14.2 or later"
+            )
         self.sample_rate = int(config.sample_rate or self.output.default_sample_rate)
         self.channels = min(config.channels, self.output.output_channels)
-        if self.input is not None:
-            self.channels = min(self.channels, self.input.input_channels)
         self._capture = None
         if self.channels < 1:
             raise ValueError("the chosen devices have no usable channels in common")
@@ -317,50 +282,6 @@ class Engine:
         except Exception:  # noqa: BLE001 - never block playback over this
             self._restore_volume = None
 
-    def _steer_default_input_away(self) -> None:
-        """Stop macOS reaching for the headset's microphone while we record.
-
-        Reading the loopback device counts as microphone use, and macOS serves
-        that from whichever device is the *default* input. When that default is
-        the headset, it gets pulled out of A2DP into hands-free mode: mono,
-        narrow band, microphone live. Pointing the default at anything else for
-        the duration avoids it.
-        """
-        if not self.config.manage_input:
-            return
-        try:
-            current = volume_control.default_input_device()
-            if current is None:
-                return
-            if volume_control.device_name(current) != self.output.name:
-                return  # the default is not the headset; nothing to do
-
-            alternatives = [
-                (device, name)
-                for device, name in volume_control.input_devices()
-                if name != self.output.name and name != self.input.name
-            ]
-            # Prefer the machine's own microphone over another accessory.
-            alternatives.sort(key=lambda entry: 0 if "MacBook" in entry[1] else 1)
-            if not alternatives:
-                return
-            previous_name = volume_control.device_name(current)
-            if volume_control.set_default_input_device(alternatives[0][0]):
-                self._restore_input = previous_name
-        except Exception:  # noqa: BLE001 - never block playback over this
-            self._restore_input = None
-
-    def _give_default_input_back(self) -> None:
-        if self._restore_input is None:
-            return
-        try:
-            device = volume_control.find_input_device(self._restore_input)
-            if device is not None:
-                volume_control.set_default_input_device(device)
-        except Exception:  # noqa: BLE001
-            pass
-        self._restore_input = None
-
     def _give_output_volume_back(self) -> None:
         if self._restore_volume is None:
             return
@@ -432,8 +353,14 @@ class Engine:
                 dtype="float32",
                 callback=self._playback_callback,
             )
-            self._stream.start()
+            # Capture first, and let the ring fill before playback starts:
+            # starting them together plays one block of silence while the
+            # first block is still being captured.
             self._input_stream.start()
+            deadline = time.monotonic() + 0.5
+            while self._ring.filled < block * 2 and time.monotonic() < deadline:
+                time.sleep(0.002)
+            self._stream.start()
         except Exception:
             self.stop()
             raise
@@ -463,29 +390,7 @@ class Engine:
             return
         self._take_output_volume()
 
-        if self.capture_mode == "tap":
-            self._start_tap_streams()
-            return
-
-        else:
-            # Reading a loopback counts as recording, and macOS serves that
-            # from the default input — which must therefore not be the headset.
-            self._steer_default_input_away()
-            devices = (self.input.index, self.output.index)
-
-        try:
-            self._stream = sounddevice.Stream(
-                device=devices,
-                samplerate=self.sample_rate,
-                blocksize=self.config.block_size,
-                channels=self.channels,
-                dtype="float32",
-                callback=self._callback,
-            )
-            self._stream.start()
-        except Exception:
-            self._close_capture()
-            raise
+        self._start_tap_streams()
 
     def stop(self) -> None:
         for attribute in ("_input_stream", "_stream"):
@@ -497,7 +402,6 @@ class Engine:
         self._ring = None
         self._close_capture()
         self._give_output_volume_back()
-        self._give_default_input_back()
 
     def _close_capture(self) -> None:
         if self._capture is not None:
@@ -507,8 +411,7 @@ class Engine:
     def status(self) -> dict:
         return {
             "running": self.running,
-            "capture": self.capture_mode,
-            "input": self.input.name if self.input else system_tap.AGGREGATE_NAME,
+            "input": system_tap.AGGREGATE_NAME,
             "output": self.output.name,
             "sample_rate": self.sample_rate,
             "channels": self.channels,
@@ -519,7 +422,6 @@ class Engine:
             ),
             "loudness_phon": self.config.loudness_phon,
             "crossfeed": self._crossfeed.strength,
-            "moved_default_input": self._restore_input is not None,
             "output_volume_raised_from": (
                 round(self._restore_volume[1], 3) if self._restore_volume else None
             ),

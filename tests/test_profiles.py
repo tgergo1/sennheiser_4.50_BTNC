@@ -55,13 +55,17 @@ def test_validation_rejects_nonsense_before_it_reaches_the_engine(store):
         profiles.save(profiles.Profile(name="  "))
 
 
-def test_a_profile_written_by_another_version_is_skipped_not_fatal(store):
+def test_fields_from_another_version_are_ignored_not_fatal(store):
+    # Old profiles carried capture and input_device; dropping the whole
+    # profile because of a key we no longer use would lose the user's setup.
     store.write_text(json.dumps({"profiles": [
-        {"name": "Good", "preset": "Rock"},
-        {"name": "Future", "preset": "Rock", "unknown_field": 1},
+        {"name": "Old", "preset": "Rock", "capture": "device",
+         "input_device": "BlackHole 2ch", "output_device": "Headphones"},
     ]}))
     found = profiles.profiles()
-    assert "Good" in found and "Future" not in found
+    assert "Old" in found
+    assert found["Old"].preset == "Rock"
+    assert found["Old"].output_device == "Headphones"
 
 
 def test_a_corrupt_file_reads_as_empty(store):

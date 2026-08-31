@@ -126,8 +126,7 @@ Settings. A CoreAudio process tap asks the system directly for the audio it is
 already playing, muted at the far end so you hear only the equalised copy. The
 tap excludes this app, so its own output cannot be captured and fed back round.
 
-Requires macOS 14.2 or later. Without it, `captune` falls back to reading a
-loopback device — see below.
+Requires macOS 14.2 or later.
 
 **Latency** is about 12 ms at the default 512-frame block, on top of
 Bluetooth's own. `captune eq status` counts anything that goes wrong: blocks
@@ -136,26 +135,15 @@ played because it got ahead.
 
 ### The microphone
 
-The tap is not a microphone and macOS does not treat it as one. It is gated by
-audio capture permission instead, and the equaliser never opens an input device
-of any kind.
+It does not use one, and it cannot: the bundle asks for no microphone
+permission at all, and there is no input device anywhere in the path. macOS
+gates the tap under audio capture instead, so nothing here appears as a
+microphone or lights the indicator.
 
-That was not true of the older loopback mode, and could not be made true:
-reading a virtual device is audio input as far as macOS is concerned, so the
-microphone indicator lit up however virtual the device was. Removing it is most
-of why the tap exists.
-
-### If your Mac is older than 14.2
-
-```
-brew install blackhole-2ch
-captune eq start --capture device --input "BlackHole 2ch" --output "YourHeadphones"
-```
-
-Then set the system output to **BlackHole 2ch**, so audio flows apps →
-BlackHole → OpenCapTune → headphones, and set it back when you stop. This mode
-does show the microphone indicator, and the equaliser moves the default input
-off the headset while it runs so the headset is not pulled into call mode.
+An earlier design read a virtual loopback device, and that could not be made
+true of it — reading a virtual device is audio input as far as macOS is
+concerned, however virtual the device is. Being rid of that is most of why the
+tap exists.
 
 ### Volume
 
@@ -174,8 +162,8 @@ Corrections cost level on top of that, and unavoidably: you cannot boost
 6.2 dB. If you want the loudest possible output, run `Neutral` with no
 calibration, which needs no preamp at all.
 
-**To hear your Mac normally again**, set the output device back and
-`captune eq stop`.
+**To hear your Mac normally again**, `captune eq stop`. Nothing else needs
+undoing: the system output never moved.
 
 ## Headphone calibration
 

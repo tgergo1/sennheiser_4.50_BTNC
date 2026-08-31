@@ -9,13 +9,12 @@ bar rather than four.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from . import eq as equaliser
-
-DEFAULT_INPUT = "BlackHole 2ch"
 
 
 @dataclass(frozen=True)
@@ -28,8 +27,6 @@ class Profile:
     bass: int = 0
     treble: int = 0
     output_device: str | None = None
-    capture: str = "auto"
-    input_device: str | None = DEFAULT_INPUT
 
     def validate(self) -> None:
         """Fail loudly at save time rather than quietly at apply time."""
@@ -83,11 +80,14 @@ def _read() -> list[dict]:
 
 def profiles() -> dict[str, Profile]:
     found = {}
+    fields = {f.name for f in dataclasses.fields(Profile)}
     for entry in _read():
         try:
-            found[entry["name"]] = Profile(**entry)
+            # Ignore anything a different version wrote, rather than dropping
+            # the whole profile because of one unfamiliar key.
+            found[entry["name"]] = Profile(**{k: v for k, v in entry.items() if k in fields})
         except (TypeError, KeyError):
-            continue  # a profile written by a different version
+            continue
     return found
 
 
@@ -120,7 +120,7 @@ def delete(name: str) -> bool:
     return True
 
 
-def from_status(name: str, status: dict, input_device: str | None = None) -> Profile:
+def from_status(name: str, status: dict) -> Profile:
     """Capture what the engine is doing right now as a named profile."""
     return Profile(
         name=name,
@@ -129,8 +129,6 @@ def from_status(name: str, status: dict, input_device: str | None = None) -> Pro
         crossfeed=int(status.get("crossfeed", 0)),
         loudness_phon=status.get("loudness_phon"),
         output_device=status.get("output"),
-        capture=status.get("capture", "auto"),
-        input_device=input_device,
     )
 
 
@@ -144,8 +142,6 @@ def to_config(value: Profile):
             "equaliser is running, or set one explicitly"
         )
     return EngineConfig(
-        capture=value.capture,
-        input_device=value.input_device,
         output_device=value.output_device,
         preset=value.preset,
         calibration=value.calibration,

@@ -42,9 +42,6 @@ REFRESH_SECONDS = 2.0
 CROSSFEED_STEPS = [0, 25, 50, 75, 100]
 LOUDNESS_STEPS = [None, 50.0, 60.0, 70.0, 80.0]
 
-DEFAULT_INPUT = profile_store.DEFAULT_INPUT
-
-
 def _label_for_loudness(phon: float | None) -> str:
     return "Off" if phon is None else f"{phon:g} phon"
 
@@ -155,15 +152,6 @@ class MenuBarController(NSObject):
         self._apply_state()
 
     @objc.python_method
-    def _default_output_name(self):
-        try:
-            import sounddevice
-
-            return sounddevice.query_devices(kind="output")["name"]
-        except Exception:  # noqa: BLE001 - only used to phrase a warning
-            return None
-
-    @objc.python_method
     def _follow_device(self):
         """Start and stop as the profile's output device comes and goes."""
         try:
@@ -212,21 +200,9 @@ class MenuBarController(NSObject):
         self.power_item.setTitle_("Stop" if running else "Start")
 
         if not running:
-            # Silence with no explanation is the worst failure this can have:
-            # audio routed into the virtual device with nothing reading it.
-            default_output = self._default_output_name() or ""
-            if "blackhole" in default_output.lower():
-                self.state_item.setTitle_("Not running — no sound")
-                self.routing_item.setHidden_(False)
-                self.routing_item.setTitle_(
-                    f"Output is {default_output}; start it or change it back"
-                )
-            else:
-                self.state_item.setTitle_("Not running")
-                self.routing_item.setHidden_(not battery)
-                self.routing_item.setTitle_(
-                    f"{headset['name']}{battery}" if headset else ""
-                )
+            self.state_item.setTitle_("Not running")
+            self.routing_item.setHidden_(not battery)
+            self.routing_item.setTitle_(f"{headset['name']}{battery}" if headset else "")
         else:
             preset = self.status["preset"]
             calibration = self.status.get("calibration")
@@ -372,7 +348,7 @@ class MenuBarController(NSObject):
             output = self.output_device or (self._outputs[0].name if self._outputs else None)
             if output is None:
                 raise HostAppError("no output device is available")
-            daemon.start(EngineConfig(input_device=DEFAULT_INPUT, output_device=output))
+            daemon.start(EngineConfig(output_device=output))
 
         self._guard(work)
 

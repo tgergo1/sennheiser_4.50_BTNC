@@ -19,34 +19,19 @@ def fixed_devices(monkeypatch):
     monkeypatch.setattr(devices_module, "devices", lambda: FIXTURE)
 
 
-def test_capturing_from_the_headsets_own_microphone_is_refused():
-    # Opening it drags the headset out of A2DP into hands-free mode: mono,
-    # narrow band, microphone live. Refuse rather than do that silently.
-    with pytest.raises(ValueError, match="own microphone"):
-        Engine(EngineConfig(capture="device", input_device="Bogcifüles",
-                            output_device="Bogcifüles"))
-
-
-def test_the_normal_loopback_routing_is_accepted():
-    engine = Engine(EngineConfig(capture="device", input_device="BlackHole 2ch",
-                                 output_device="Bogcifüles"))
-    assert engine.input.name == "BlackHole 2ch"
+def test_the_output_device_is_resolved_by_name():
+    engine = Engine(EngineConfig(output_device="Bogcifüles"))
     assert engine.output.name == "Bogcifüles"
+    assert engine.output.output_channels == 2
 
 
 def test_a_different_output_still_works():
-    engine = Engine(EngineConfig(capture="device", input_device="BlackHole 2ch",
-                                 output_device="MacBook Pro Speakers"))
+    engine = Engine(EngineConfig(output_device="MacBook Pro Speakers"))
     assert engine.output.name == "MacBook Pro Speakers"
 
 
-def test_device_capture_needs_an_input_device():
-    with pytest.raises(ValueError, match="needs an input device"):
-        Engine(EngineConfig(capture="device", input_device=None,
-                            output_device="Bogcifüles"))
-
-
-def test_tap_capture_needs_no_input_device_at_all():
-    engine = Engine(EngineConfig(capture="tap", output_device="Bogcifüles"))
-    assert engine.capture_mode == "tap"
-    assert engine.input is None
+def test_nothing_is_captured_from_an_input_device():
+    # There is no input device at all now: the tap is the only source, which
+    # is why macOS has no reason to treat any of this as a microphone.
+    engine = Engine(EngineConfig(output_device="Bogcifüles"))
+    assert not hasattr(engine, "input") or engine.input is None

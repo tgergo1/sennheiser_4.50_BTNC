@@ -1,15 +1,12 @@
 """Reading and writing CoreAudio device volume.
 
-This exists because of a trap in the virtual-device routing. Your volume keys
-act on whichever device is the *system output*, so once that becomes the
-virtual device the real output device's own volume is stranded at whatever it
-happened to be — unreachable, and silently attenuating everything the
-equaliser sends. On this machine it sat at 0.56, throwing away nearly half the
-available level with no control able to reach it.
+A device's own volume scales everything sent to it, and on a Bluetooth headset
+that value is applied in the headset's own amplifier — writing it transmits an
+AVRCP command over the air. If it is left low, it silently throws away level
+the equaliser cannot get back.
 
 So the equaliser takes its output device to unity while it runs and puts it
-back when it stops. Volume then lives entirely on the virtual device, where
-the keyboard can reach it.
+back when it stops, leaving the volume keys as the only thing in the way.
 
 Everything here is best-effort: not every device exposes a settable volume,
 and failing to adjust one is never a reason to refuse to play audio.
@@ -110,63 +107,6 @@ def _name(device: int) -> str | None:
     # Copy the text out now: the wrapper must not outlive this call or PyObjC
     # will release a string it does not own.
     return str(objc.objc_object(c_void_p=pointer))
-
-
-def default_input_device() -> int | None:
-    CoreAudio = _core_audio()
-    address = _address(
-        CoreAudio.kAudioHardwarePropertyDefaultInputDevice,
-        CoreAudio.kAudioObjectPropertyScopeGlobal,
-        CoreAudio.kAudioObjectPropertyElementMain,
-    )
-    status, _, blob = CoreAudio.AudioObjectGetPropertyData(
-        CoreAudio.kAudioObjectSystemObject, address, 0, b"", 4, None
-    )
-    if status != 0:
-        return None
-    return struct.unpack("I", bytes(blob))[0]
-
-
-def set_default_input_device(device: int) -> bool:
-    CoreAudio = _core_audio()
-    address = _address(
-        CoreAudio.kAudioHardwarePropertyDefaultInputDevice,
-        CoreAudio.kAudioObjectPropertyScopeGlobal,
-        CoreAudio.kAudioObjectPropertyElementMain,
-    )
-    status = CoreAudio.AudioObjectSetPropertyData(
-        CoreAudio.kAudioObjectSystemObject, address, 0, b"", 4, struct.pack("I", device)
-    )
-    return status == 0
-
-
-def device_name(device: int) -> str | None:
-    return _name(device)
-
-
-def input_devices() -> list[tuple[int, str]]:
-    """Devices that can capture, as (id, name)."""
-    CoreAudio = _core_audio()
-    found = []
-    for device in _device_ids():
-        address = _address(
-            CoreAudio.kAudioDevicePropertyStreams,
-            CoreAudio.kAudioObjectPropertyScopeInput,
-            CoreAudio.kAudioObjectPropertyElementMain,
-        )
-        status, size = CoreAudio.AudioObjectGetPropertyDataSize(device, address, 0, b"", None)
-        if status == 0 and size:
-            name = _name(device)
-            if name:
-                found.append((device, name))
-    return found
-
-
-def find_input_device(name: str) -> int | None:
-    for device, candidate in input_devices():
-        if candidate == name:
-            return device
-    return None
 
 
 def find_output_device(name: str) -> int | None:

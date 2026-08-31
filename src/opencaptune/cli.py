@@ -161,15 +161,11 @@ def _print_status(report: dict) -> None:
     phon = report.get("loudness_phon")
     print(f"  loudness    {'off' if phon is None else f'{phon:g} phon'}"
           f"     crossfeed {report.get('crossfeed', 0)}%")
-    if report.get("moved_default_input"):
-        print("  microphone  default input moved off the headset so it stays in "
-              "A2DP (restored on stop)")
     raised = report.get("output_volume_raised_from")
     if raised is not None:
         print(f"  volume      output device raised to full from {raised:.0%} "
               f"(restored on stop)")
-    how = "system audio (process tap)" if report.get("capture") == "tap" else report["input"]
-    print(f"  routing     {how} -> {report['output']}")
+    print(f"  routing     system audio -> {report['output']}")
     print(f"  format      {report['sample_rate']} Hz, {report['channels']} ch, "
           f"{report['block_size']} frame blocks (~{report['latency_ms']} ms)")
     hours = report["frames"] / report["sample_rate"] / 3600
@@ -275,12 +271,6 @@ def main(argv: list[str] | None = None) -> int:
     calibrate.add_argument("calibration", help="calibration name, or 'off'")
 
     start = eq_commands.add_parser("start", help="start the always-on equaliser")
-    start.add_argument("--capture", default="auto", choices=("auto", "tap", "device"),
-                       help="tap: capture system audio directly, needing no virtual device "
-                            "(macOS 14.2+, the default where available); "
-                            "device: read a loopback such as BlackHole")
-    start.add_argument("--input", default="BlackHole",
-                       help="loopback device to read from, for --capture device")
     start.add_argument("--output", required=True, help="device to play to, e.g. your headphones")
     start.add_argument("--preset", default="Neutral", help="preset to start with")
     start.add_argument("--calibration", default=None,
@@ -295,8 +285,6 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--treble", type=int, default=0, metavar="0-100")
     start.add_argument("--block-size", type=int, default=512,
                        help="frames per block; lower is less latency, more risk of glitches")
-    start.add_argument("--no-manage-input", action="store_true",
-                       help="leave the system's default input device alone")
     start.add_argument("--no-manage-volume", action="store_true",
                        help="leave the output device's own volume alone")
     start.add_argument("--sample-rate", type=int, default=None,
@@ -351,8 +339,6 @@ def main(argv: list[str] | None = None) -> int:
 
                 report = daemon.start(
                     EngineConfig(
-                        capture=arguments.capture,
-                        input_device=arguments.input,
                         output_device=arguments.output,
                         preset=arguments.preset,
                         calibration=arguments.calibration,
@@ -364,7 +350,6 @@ def main(argv: list[str] | None = None) -> int:
                         sample_rate=arguments.sample_rate,
                         block_size=arguments.block_size,
                         manage_volume=not arguments.no_manage_volume,
-                        manage_input=not arguments.no_manage_input,
                     )
                 )
                 print("Equaliser running.")
@@ -549,7 +534,7 @@ def main(argv: list[str] | None = None) -> int:
             if arguments.profile_command == "show":
                 entry = profile_store.profile(arguments.name)
                 print(f"{entry.name}\n  {entry.summary()}")
-                print(f"  {entry.input_device} -> {entry.output_device or '(none set)'}")
+                print(f"  -> {entry.output_device or '(none set)'}")
                 return 0
 
             if arguments.profile_command == "delete":

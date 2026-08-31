@@ -112,6 +112,63 @@ def _name(device: int) -> str | None:
     return str(objc.objc_object(c_void_p=pointer))
 
 
+def default_input_device() -> int | None:
+    CoreAudio = _core_audio()
+    address = _address(
+        CoreAudio.kAudioHardwarePropertyDefaultInputDevice,
+        CoreAudio.kAudioObjectPropertyScopeGlobal,
+        CoreAudio.kAudioObjectPropertyElementMain,
+    )
+    status, _, blob = CoreAudio.AudioObjectGetPropertyData(
+        CoreAudio.kAudioObjectSystemObject, address, 0, b"", 4, None
+    )
+    if status != 0:
+        return None
+    return struct.unpack("I", bytes(blob))[0]
+
+
+def set_default_input_device(device: int) -> bool:
+    CoreAudio = _core_audio()
+    address = _address(
+        CoreAudio.kAudioHardwarePropertyDefaultInputDevice,
+        CoreAudio.kAudioObjectPropertyScopeGlobal,
+        CoreAudio.kAudioObjectPropertyElementMain,
+    )
+    status = CoreAudio.AudioObjectSetPropertyData(
+        CoreAudio.kAudioObjectSystemObject, address, 0, b"", 4, struct.pack("I", device)
+    )
+    return status == 0
+
+
+def device_name(device: int) -> str | None:
+    return _name(device)
+
+
+def input_devices() -> list[tuple[int, str]]:
+    """Devices that can capture, as (id, name)."""
+    CoreAudio = _core_audio()
+    found = []
+    for device in _device_ids():
+        address = _address(
+            CoreAudio.kAudioDevicePropertyStreams,
+            CoreAudio.kAudioObjectPropertyScopeInput,
+            CoreAudio.kAudioObjectPropertyElementMain,
+        )
+        status, size = CoreAudio.AudioObjectGetPropertyDataSize(device, address, 0, b"", None)
+        if status == 0 and size:
+            name = _name(device)
+            if name:
+                found.append((device, name))
+    return found
+
+
+def find_input_device(name: str) -> int | None:
+    for device, candidate in input_devices():
+        if candidate == name:
+            return device
+    return None
+
+
 def find_output_device(name: str) -> int | None:
     """The CoreAudio device with this name that has an output volume control.
 

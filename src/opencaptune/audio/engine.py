@@ -30,6 +30,7 @@ class EngineConfig:
     reference_phon: float = loudness_module.DEFAULT_REFERENCE_PHON
     crossfeed: int = 0
     manage_volume: bool = True
+    manage_input: bool = True
     bass: int = 0
     treble: int = 0
     sample_rate: int | None = None
@@ -57,6 +58,11 @@ class Engine:
         self._stream = None
         self._lock = threading.Lock()
         self._restore_volume: tuple[int, float] | None = None
+        # Held by name, not by id: CoreAudio reassigns device ids when a
+        # device re-enumerates, and a Bluetooth headset does that whenever it
+        # reconnects. Restoring a stale id would point the default input at
+        # whatever inherited the number.
+        self._restore_input: str | None = None
         self._spectrum = np.full(len(eq.bands()), -90.0)
         self._bins = None
         # Only measured while something is displaying it.
@@ -68,6 +74,16 @@ class Engine:
             raise ValueError(
                 f"input and output are the same device ({self.input.name!r}); "
                 "the point of the loop is that they differ"
+            )
+
+        # Never capture from a headset's own microphone: opening it forces the
+        # headset out of A2DP and into hands-free mode, which is mono, narrow
+        # band, and turns the microphone on. We only ever need the loopback.
+        if self.input.name == self.output.name:
+            raise ValueError(
+                f"{self.input.name!r} is the headset's own microphone. Capturing "
+                "from it would switch the headset into call mode. Use a virtual "
+                "loopback device such as BlackHole as the input."
             )
 
         self.sample_rate = int(config.sample_rate or self.output.default_sample_rate)
@@ -224,6 +240,50 @@ class Engine:
         except Exception:  # noqa: BLE001 - never block playback over this
             self._restore_volume = None
 
+    def _steer_default_input_away(self) -> None:
+        """Stop macOS reaching for the headset's microphone while we record.
+
+        Reading the loopback device counts as microphone use, and macOS serves
+        that from whichever device is the *default* input. When that default is
+        the headset, it gets pulled out of A2DP into hands-free mode: mono,
+        narrow band, microphone live. Pointing the default at anything else for
+        the duration avoids it.
+        """
+        if not self.config.manage_input:
+            return
+        try:
+            current = volume_control.default_input_device()
+            if current is None:
+                return
+            if volume_control.device_name(current) != self.output.name:
+                return  # the default is not the headset; nothing to do
+
+            alternatives = [
+                (device, name)
+                for device, name in volume_control.input_devices()
+                if name != self.output.name and name != self.input.name
+            ]
+            # Prefer the machine's own microphone over another accessory.
+            alternatives.sort(key=lambda entry: 0 if "MacBook" in entry[1] else 1)
+            if not alternatives:
+                return
+            previous_name = volume_control.device_name(current)
+            if volume_control.set_default_input_device(alternatives[0][0]):
+                self._restore_input = previous_name
+        except Exception:  # noqa: BLE001 - never block playback over this
+            self._restore_input = None
+
+    def _give_default_input_back(self) -> None:
+        if self._restore_input is None:
+            return
+        try:
+            device = volume_control.find_input_device(self._restore_input)
+            if device is not None:
+                volume_control.set_default_input_device(device)
+        except Exception:  # noqa: BLE001
+            pass
+        self._restore_input = None
+
     def _give_output_volume_back(self) -> None:
         if self._restore_volume is None:
             return
@@ -240,6 +300,7 @@ class Engine:
         if self.running:
             return
         self._take_output_volume()
+        self._steer_default_input_away()
         self._stream = sounddevice.Stream(
             device=(self.input.index, self.output.index),
             samplerate=self.sample_rate,
@@ -256,6 +317,7 @@ class Engine:
             self._stream.close()
             self._stream = None
         self._give_output_volume_back()
+        self._give_default_input_back()
 
     def status(self) -> dict:
         return {
@@ -271,6 +333,7 @@ class Engine:
             ),
             "loudness_phon": self.config.loudness_phon,
             "crossfeed": self._crossfeed.strength,
+            "moved_default_input": self._restore_input is not None,
             "output_volume_raised_from": (
                 round(self._restore_volume[1], 3) if self._restore_volume else None
             ),

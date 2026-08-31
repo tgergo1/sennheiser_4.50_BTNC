@@ -152,6 +152,27 @@ risk of glitches, which `captune eq status` counts. Those counters — frames,
 glitches and peak — accumulate since the last reset, and `peak` is a running
 maximum, so use `captune eq status --reset` before measuring anything.
 
+### The microphone
+
+The headset shows up on macOS twice: as an A2DP output and as a hands-free
+microphone. Opening that microphone drags the headset out of A2DP and into
+call mode — mono, narrow band, microphone live — which is not something an
+equaliser should ever do.
+
+Two measures keep it out of that state. Capturing from the headset's own
+microphone is refused outright, with an error rather than a silent switch. And
+because macOS serves recording from whichever device is the *default* input,
+the equaliser moves that default off the headset while it runs and restores it
+on stop. `--no-manage-input` leaves it alone.
+
+**macOS will still show the microphone indicator**, and that part cannot be
+fixed from here. Reading the loopback device is audio input as far as the
+system is concerned, and it does not distinguish a virtual loopback from a
+real microphone. No microphone audio is captured — the equaliser only ever
+reads BlackHole. Process taps use a different permission and would remove the
+indicator entirely, which is one more reason they are worth finishing
+([docs/ROADMAP.md](docs/ROADMAP.md)).
+
 ### Volume
 
 Your volume keys act on whichever device is the system output, so once that is

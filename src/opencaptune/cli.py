@@ -161,6 +161,9 @@ def _print_status(report: dict) -> None:
     phon = report.get("loudness_phon")
     print(f"  loudness    {'off' if phon is None else f'{phon:g} phon'}"
           f"     crossfeed {report.get('crossfeed', 0)}%")
+    if report.get("moved_default_input"):
+        print("  microphone  default input moved off the headset so it stays in "
+              "A2DP (restored on stop)")
     raised = report.get("output_volume_raised_from")
     if raised is not None:
         print(f"  volume      output device raised to full from {raised:.0%} "
@@ -287,6 +290,8 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--treble", type=int, default=0, metavar="0-100")
     start.add_argument("--block-size", type=int, default=512,
                        help="frames per block; lower is less latency, more risk of glitches")
+    start.add_argument("--no-manage-input", action="store_true",
+                       help="leave the system's default input device alone")
     start.add_argument("--no-manage-volume", action="store_true",
                        help="leave the output device's own volume alone")
     start.add_argument("--sample-rate", type=int, default=None,
@@ -353,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
                         sample_rate=arguments.sample_rate,
                         block_size=arguments.block_size,
                         manage_volume=not arguments.no_manage_volume,
+                        manage_input=not arguments.no_manage_input,
                     )
                 )
                 print("Equaliser running.")
